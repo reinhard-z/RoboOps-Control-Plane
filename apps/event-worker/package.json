@@ -1,0 +1,21 @@
+{
+  "name": "@roboops/event-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@roboops/fleet-persistence": "workspace:*",
+    "@roboops/fleet-protocol": "workspace:*",
+    "@roboops/observability": "workspace:*"
+  }
+}
+

@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@roboops/fleet-domain": ["packages/fleet-domain/src/index.ts"],
+      "@roboops/fleet-persistence": ["packages/fleet-persistence/src/index.ts"],
+      "@roboops/fleet-protocol": ["packages/fleet-protocol/src/index.ts"],
+      "@roboops/observability": ["packages/observability/src/index.ts"],
+      "@roboops/test-support": ["packages/test-support/src/index.ts"]
+    }
+  }
+}
+

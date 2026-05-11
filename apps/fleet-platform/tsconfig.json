@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
+  },
+  "references": [
+    { "path": "../../packages/fleet-protocol" },
+    { "path": "../../packages/fleet-domain" },
+    { "path": "../../packages/fleet-persistence" },
+    { "path": "../../packages/observability" }
+  ],
+  "include": ["src/**/*.ts"]
+}
+

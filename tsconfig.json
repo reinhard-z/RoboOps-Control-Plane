@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/fleet-protocol" },
+    { "path": "./packages/fleet-domain" },
+    { "path": "./packages/fleet-persistence" },
+    { "path": "./packages/observability" },
+    { "path": "./packages/test-support" },
+    { "path": "./apps/fleet-platform" },
+    { "path": "./apps/operator-ui" },
+    { "path": "./apps/cloud-edge-simulator" },
+    { "path": "./apps/event-worker" }
+  ]
+}
+
