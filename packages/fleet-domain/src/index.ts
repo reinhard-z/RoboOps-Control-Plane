@@ -2,6 +2,12 @@
 export type { CommandAckResult, MissionTimeoutResult } from "./ack.js";
 export { applyCommandAck, applyMissionTimeout } from "./ack.js";
 export type {
+  CancelMissionRejectionReason,
+  CancelMissionResult,
+  RequestMissionCancellationInput
+} from "./cancel.js";
+export { requestMissionCancellation } from "./cancel.js";
+export type {
   DispatchMissionCommandInput,
   DispatchMissionResult,
   DispatchRejectionReason

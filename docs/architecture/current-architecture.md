@@ -2,12 +2,16 @@
 
 Snapshot date: 2026-05-11.
 
-The important thing to know: the runtime apps are mostly placeholders right now. The real implemented core is:
+The important thing to know: the domain/protocol core is implemented, and
+`apps/fleet-platform` now has the first Phase 2 API/gateway slice. The other
+runtime apps are still placeholders.
 
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
 - `packages/test-support`: fake clock/test helpers.
 - Phase 1 tests proving the incident path without API, DB, UI, or simulator.
+- `apps/fleet-platform`: in-memory HTTP API, SSE stream, edge WebSocket gateway,
+  queued command delivery, cancel command flow, and telemetry freshness sweep.
 
 ## What Exists Today
 
@@ -19,13 +23,15 @@ flowchart LR
     Tests["Phase 1 tests<br/>prove behavior"]
     Domain["fleet-domain<br/>pure reducers"]
     Protocol["fleet-protocol<br/>contracts + schemas"]
+    Api["fleet-platform<br/>HTTP/SSE/WebSocket<br/>in-memory state"]
     Tests --> Domain
     Tests --> Protocol
     Domain --> Protocol
+    Api --> Domain
+    Api --> Protocol
   end
 
   subgraph Placeholders["Scaffolded for later phases"]
-    Platform["fleet-platform"]
     UI["operator-ui"]
     Simulator["cloud-edge-simulator"]
     Persistence["fleet-persistence"]
@@ -34,7 +40,8 @@ flowchart LR
   end
 ```
 
-At the moment, the domain tests are the executable demo. The app boxes exist so Phase 2 has somewhere to land.
+The domain tests still prove the behavior at the pure reducer level. The
+fleet-platform tests now prove the first process boundary around that behavior.
 
 ## Phase 2 Target
 
@@ -58,7 +65,12 @@ flowchart LR
   UI --> Protocol
 ```
 
-Phase 2 should make `apps/fleet-platform` the coordinator. It should expose HTTP/SSE/WebSocket edges, but keep mission decisions inside `fleet-domain`.
+Phase 2 is now partially implemented in `apps/fleet-platform`. The app exposes
+REST/SSE/WebSocket edges and keeps mission decisions inside `fleet-domain`.
+Queued commands are delivered after the edge sends `edge.hello`, which avoids
+double-delivery between socket upgrade and the first edge identity message.
+Remaining Phase 2 hardening work is mostly endpoint breadth and scenario depth,
+not the basic transport skeleton.
 
 ## Mission Incident Flow
 
@@ -79,6 +91,10 @@ flowchart TB
   StaleCheck --> Degraded["Robot DEGRADED<br/>mission still RUNNING"]
 
   Degraded --> Blocked["New risky commands<br/>are safety-blocked"]
+  Running --> Cancel["Operator requests cancel"]
+  Cancel --> CancelRequested["Mission CANCEL_REQUESTED<br/>cancel command sent"]
+  CancelRequested --> CancelAck["Edge accepts cancel"]
+  CancelAck --> Cancelled["Mission CANCELLED"]
   Degraded --> ReconnectStart["beginReconnect"]
 
   ReconnectStart --> Reconnecting["Robot RECONNECTING<br/>mission RECONNECTING"]
@@ -87,7 +103,10 @@ flowchart TB
   Handshake --> ManualReview["Conflict<br/>MANUAL_REVIEW"]
 ```
 
-The key modeling point is that stale telemetry changes operational risk. It does not automatically fail the mission lifecycle.
+The key modeling point is that stale telemetry changes operational risk. It does
+not automatically fail the mission lifecycle. The Fleet Platform runs a
+telemetry freshness sweep and also rechecks freshness before dispatching a new
+mission command.
 
 ## Domain Package Shape
 
@@ -118,6 +137,7 @@ import {
   applyCommandAck,
   ingestRobotTelemetry,
   evaluateTelemetryFreshness,
+  requestMissionCancellation,
   beginReconnect,
   processReconnectHandshake
 } from "@roboops/fleet-domain";
@@ -127,11 +147,14 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 
 ## Phase 2 Build Notes
 
-- Start in `apps/fleet-platform`; it is still a placeholder.
+- Continue in `apps/fleet-platform`; the first API/gateway slice is implemented.
 - Keep a single in-memory `DomainState` behind small repository/service functions.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
 - Publish reducer-produced `domainEvents` and `auditEvents` to API responses/SSE.
+- Keep cancellation as a domain reducer flow:
+  `CANCEL_REQUESTED` after operator request, then `CANCELLED` after accepted edge ack.
+- Run telemetry freshness evaluation outside demo endpoints so stale robots degrade automatically.
 - Keep command delivery separate from UI streaming:
   - REST for operator commands and reads
   - SSE for browser live updates
