@@ -128,6 +128,10 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
               <dt>Acked command</dt>
               <dd id="mission-ack">none</dd>
             </div>
+            <div>
+              <dt>Reason</dt>
+              <dd id="mission-reason">none</dd>
+            </div>
           </dl>
         </section>
 

@@ -22,7 +22,8 @@ operator console slice for the incident demo.
   creates `GO_TO_POSE` missions, cancels selected missions, and highlights
   `ONLINE`, `STALE`, `DEGRADED`, `OFFLINE`, and `RECONNECTING` states. Local
   demo controls are rendered only when explicitly configured with demo mode and
-  a demo admin token.
+  a demo admin token. Mission creation is disabled while the robot already has
+  active work, and blocked/rejected mission rows surface the platform reason.
 
 ## What Exists Today
 

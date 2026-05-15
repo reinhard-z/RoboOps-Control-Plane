@@ -102,7 +102,9 @@ Open `http://127.0.0.1:4020`. With demo controls disabled, use **Create
 Mission** to dispatch the default `GO_TO_POSE` command. With demo controls
 enabled, use **Reset State** to clear residual in-memory missions, or **Start
 Clean Mission** to reset and dispatch the normal demo `GO_TO_POSE` in one
-action. **Mark Stale** and **Reconnect** drive the protected demo fault
+action. The UI disables mission creation while `robot-a` already has active
+work, and blocked/rejected mission rows show the platform reason when one is
+available. **Mark Stale** and **Reconnect** drive the protected demo fault
 endpoints when you want to demonstrate those paths without restarting every
 process.
 

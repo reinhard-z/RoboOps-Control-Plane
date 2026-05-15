@@ -1,7 +1,10 @@
 import {
   formatBattery,
+  formatCommandRejectionMessage,
+  formatMissionFailureReason,
   formatRelativeTime,
   isActiveMissionState,
+  missionCreationAvailability,
   parsePoseNumber,
   selectDefaultMission,
   sortMissions,
@@ -83,7 +86,16 @@ interface ViewRefs {
   readonly missionOperational: HTMLElement;
   readonly missionCommand: HTMLElement;
   readonly missionAck: HTMLElement;
+  readonly missionReason: HTMLElement;
   readonly eventFeed: HTMLElement;
+}
+
+/** Request options for Fleet Platform JSON calls from the browser console. */
+interface RequestJsonOptions {
+  readonly method?: "GET" | "POST";
+  readonly body?: unknown;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly acceptCommandRejection?: boolean;
 }
 
 const config = readBrowserConfig();
@@ -164,6 +176,15 @@ async function refreshSnapshot(): Promise<void> {
 
 /** Creates a GO_TO_POSE mission for the configured demo robot. */
 async function createMission(): Promise<void> {
+  const availability = missionCreationAvailability(state.missions, state.robot);
+  if (!availability.canCreate) {
+    state.actionMessage =
+      availability.message ?? "Cancel or finish the active mission first.";
+    state.actionMessageIsError = true;
+    render();
+    return;
+  }
+
   state.busyAction = "create";
   state.actionMessage = "Creating mission";
   state.actionMessageIsError = false;
@@ -172,6 +193,7 @@ async function createMission(): Promise<void> {
   try {
     const body = await requestJson<MissionCommandResponse>("/missions", {
       method: "POST",
+      acceptCommandRejection: true,
       body: {
         robotId: config.robotId,
         type: "GO_TO_POSE",
@@ -186,7 +208,8 @@ async function createMission(): Promise<void> {
     state.actionMessage =
       body.result.status === "ACCEPTED"
         ? `Mission dispatched (${body.deliveryCount} edge delivery)`
-        : `Mission ${body.result.status.toLowerCase()}`;
+        : formatCommandRejectionMessage(body.result.reason);
+    state.actionMessageIsError = body.result.status === "REJECTED";
     await refreshSnapshot();
   } catch (error) {
     state.actionMessage = errorMessage(error);
@@ -418,17 +441,26 @@ function renderMissions(): void {
     });
 
     const copy = document.createElement("span");
+    copy.className = "mission-copy";
     const id = document.createElement("span");
     id.className = "mission-id";
     id.textContent = mission.missionId;
     const meta = document.createElement("span");
     meta.className = "mission-meta";
     meta.textContent = `${mission.lifecycleState} · ${formatRelativeTime(mission.updatedAt)}`;
-    copy.append(id, meta);
+    const reason = formatMissionFailureReason(mission);
+    if (reason) {
+      const reasonText = document.createElement("span");
+      reasonText.className = "mission-reason";
+      reasonText.textContent = `Reason: ${reason}`;
+      copy.append(id, meta, reasonText);
+    } else {
+      copy.append(id, meta);
+    }
 
     const status = document.createElement("span");
     status.className = `status-pill tone-${missionTone(mission)}`;
-    status.textContent = mission.operationalStatus;
+    status.textContent = missionRowStatusLabel(mission);
     button.append(copy, status);
     return button;
   });
@@ -444,6 +476,7 @@ function renderMissionDetails(): void {
     setStatusPill(refs.missionOperational, "none", "neutral");
     refs.missionCommand.textContent = "none";
     refs.missionAck.textContent = "none";
+    refs.missionReason.textContent = "none";
     return;
   }
 
@@ -464,6 +497,7 @@ function renderMissionDetails(): void {
   refs.missionAck.textContent = mission.lastAcknowledgedCommandId
     ? `${mission.lastAcknowledgedCommandId}${mission.lastAcknowledgedCommandSequence ? ` · seq ${mission.lastAcknowledgedCommandSequence}` : ""}`
     : "none";
+  refs.missionReason.textContent = formatMissionFailureReason(mission) ?? "none";
 }
 
 /** Renders the bounded live event feed. */
@@ -500,9 +534,14 @@ function renderEvents(): void {
 /** Renders action feedback and button disabled states. */
 function renderActionState(): void {
   const mission = selectedMission();
+  const availability = missionCreationAvailability(state.missions, state.robot);
   refs.actionMessage.textContent = state.actionMessage;
   refs.actionMessage.classList.toggle("error", state.actionMessageIsError);
-  refs.createMissionButton.disabled = state.busyAction !== undefined;
+  refs.createMissionButton.disabled =
+    state.busyAction !== undefined || !availability.canCreate;
+  refs.createMissionButton.textContent =
+    state.busyAction === "create" ? "Creating Mission" : availability.buttonLabel;
+  refs.createMissionButton.title = availability.message ?? "";
   refs.cancelMissionButton.disabled =
     state.busyAction !== undefined ||
     !mission ||
@@ -572,6 +611,17 @@ function missionTone(mission: MissionSnapshot): StatusTone {
   return "online";
 }
 
+/** Shows terminal lifecycle states in mission rows when operational status is generic. */
+function missionRowStatusLabel(mission: MissionSnapshot): string {
+  if (mission.lifecycleState === "SAFETY_BLOCKED") {
+    return "BLOCKED";
+  }
+  if (mission.lifecycleState === "REJECTED") {
+    return "REJECTED";
+  }
+  return mission.operationalStatus;
+}
+
 /** Reads the pose form using defaults when a field is blank or invalid. */
 function readPoseTarget(): PoseTarget {
   return {
@@ -595,11 +645,7 @@ function setStatusPill(element: HTMLElement, label: string, tone: StatusTone): v
 /** Sends and receives JSON from the Fleet Platform API. */
 async function requestJson<T>(
   path: string,
-  init: {
-    readonly method?: "GET" | "POST";
-    readonly body?: unknown;
-    readonly headers?: Readonly<Record<string, string>>;
-  } = {}
+  init: RequestJsonOptions = {}
 ): Promise<T> {
   const requestInit: RequestInit = {
     method: init.method ?? "GET",
@@ -617,19 +663,41 @@ async function requestJson<T>(
   const text = await response.text();
   const parsedBody = parseJsonResponseBody(text);
   if (!response.ok) {
+    if (
+      init.acceptCommandRejection &&
+      parsedBody.ok &&
+      isRejectedMissionCommandResponse(parsedBody.value)
+    ) {
+      return parsedBody.value as T;
+    }
+
     const detail = parsedBody.ok
       ? readApiError(parsedBody.value)
       : parsedBody.reason;
     throw new Error(
       detail
-        ? `Fleet Platform returned ${response.status}: ${detail}`
-        : `Fleet Platform returned ${response.status}`
+        ? detail
+        : `Fleet Platform request failed (HTTP ${response.status})`
     );
   }
   if (!parsedBody.ok) {
     throw new Error(parsedBody.reason);
   }
   return parsedBody.value as T;
+}
+
+/** Recognizes command rejection bodies that should still update mission UI state. */
+function isRejectedMissionCommandResponse(
+  value: unknown
+): value is MissionCommandResponse {
+  if (!isRecord(value) || !isRecord(value["result"])) {
+    return false;
+  }
+
+  return (
+    value["result"]["status"] === "REJECTED" &&
+    typeof value["deliveryCount"] === "number"
+  );
 }
 
 /** Calls one protected demo endpoint with the configured local admin token. */
@@ -663,8 +731,13 @@ function apiUrl(path: string): string {
   return `${config.apiBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-/** Extracts Fleet Platform's structured error message when available. */
+/** Extracts Fleet Platform's structured error or command rejection message. */
 function readApiError(body: unknown): string | undefined {
+  const rejectionMessage = readCommandRejectionMessage(body);
+  if (rejectionMessage) {
+    return rejectionMessage;
+  }
+
   if (!isRecord(body) || !isRecord(body["error"])) {
     return undefined;
   }
@@ -673,6 +746,21 @@ function readApiError(body: unknown): string | undefined {
   const message =
     typeof error["message"] === "string" ? error["message"] : "request failed";
   return `${code}: ${message}`;
+}
+
+/** Reads rejected dispatch responses that intentionally use non-2xx HTTP status. */
+function readCommandRejectionMessage(body: unknown): string | undefined {
+  if (!isRecord(body) || !isRecord(body["result"])) {
+    return undefined;
+  }
+
+  const result = body["result"];
+  if (result["status"] !== "REJECTED") {
+    return undefined;
+  }
+
+  const reason = typeof result["reason"] === "string" ? result["reason"] : undefined;
+  return formatCommandRejectionMessage(reason);
 }
 
 /** Parses the JSON data payload from an SSE browser event. */
@@ -759,6 +847,7 @@ function collectViewRefs(): ViewRefs {
     missionOperational: requiredElement("mission-operational"),
     missionCommand: requiredElement("mission-command"),
     missionAck: requiredElement("mission-ack"),
+    missionReason: requiredElement("mission-reason"),
     eventFeed: requiredElement("event-feed")
   };
 }

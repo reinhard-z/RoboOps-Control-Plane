@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { MissionSnapshot, RobotSnapshot } from "../src/types.js";
 import {
+  formatCommandRejectionMessage,
+  formatMissionFailureReason,
   formatRelativeTime,
+  missionCreationAvailability,
   parsePoseNumber,
   selectDefaultMission,
   statusToneForConnection,
@@ -40,6 +43,76 @@ describe("operator UI view model", () => {
     expect(selectDefaultMission(missions, robot, undefined)?.missionId).toBe(
       "mission-active"
     );
+  });
+
+  it("blocks create mission controls when the robot already owns active work", () => {
+    const robot: RobotSnapshot = {
+      robotId: "robot-a",
+      connectionState: "ONLINE",
+      updatedAt: "2026-05-15T12:00:00.000Z",
+      activeMissionId: "mission-active",
+      lastSeenCommandSequence: 1
+    };
+
+    const availability = missionCreationAvailability(
+      [mission("mission-active", "2026-05-15T11:58:00.000Z")],
+      robot
+    );
+
+    expect(availability.canCreate).toBe(false);
+    expect(availability.buttonLabel).toBe("Active Mission In Progress");
+    expect(availability.blockingMissionId).toBe("mission-active");
+    expect(availability.message).toContain("mission-active");
+  });
+
+  it("allows new missions when the recorded active mission is already terminal", () => {
+    const robot: RobotSnapshot = {
+      robotId: "robot-a",
+      connectionState: "ONLINE",
+      updatedAt: "2026-05-15T12:00:00.000Z",
+      activeMissionId: "mission-old",
+      lastSeenCommandSequence: 1
+    };
+
+    const availability = missionCreationAvailability(
+      [
+        mission("mission-old", "2026-05-15T11:58:00.000Z", {
+          lifecycleState: "SUCCEEDED"
+        })
+      ],
+      robot
+    );
+
+    expect(availability.canCreate).toBe(true);
+    expect(availability.buttonLabel).toBe("Create Mission");
+  });
+
+  it("converts dispatch rejection reasons into operator-facing copy", () => {
+    expect(formatCommandRejectionMessage("ROBOT_ALREADY_ASSIGNED")).toBe(
+      "The robot already has an active mission. Cancel or finish the active mission before creating another GO_TO_POSE."
+    );
+    expect(formatCommandRejectionMessage("LOW_BATTERY")).toBe(
+      "Mission request rejected: The robot battery is below the safety threshold."
+    );
+  });
+
+  it("explains blocked and rejected mission reasons when rows expose them", () => {
+    expect(
+      formatMissionFailureReason(
+        mission("mission-blocked", "2026-05-15T11:58:00.000Z", {
+          lifecycleState: "SAFETY_BLOCKED",
+          failureReason: "ROBOT_TELEMETRY_STALE"
+        })
+      )
+    ).toBe("The robot telemetry is stale");
+
+    expect(
+      formatMissionFailureReason(
+        mission("mission-blocked", "2026-05-15T11:58:00.000Z", {
+          lifecycleState: "SAFETY_BLOCKED"
+        })
+      )
+    ).toBe("Blocked by platform safety policy");
   });
 
   it("formats relative timestamps and telemetry age for live freshness", () => {
@@ -88,14 +161,26 @@ describe("operator UI view model", () => {
   });
 });
 
+/** Overrides for the mission snapshot fields that individual tests care about. */
+interface MissionOptions {
+  readonly lifecycleState?: MissionSnapshot["lifecycleState"];
+  readonly operationalStatus?: MissionSnapshot["operationalStatus"];
+  readonly failureReason?: string;
+}
+
 /** Creates a minimal mission snapshot for selection tests. */
-function mission(missionId: string, updatedAt: string): MissionSnapshot {
+function mission(
+  missionId: string,
+  updatedAt: string,
+  options: MissionOptions = {}
+): MissionSnapshot {
   return {
     missionId,
     robotId: "robot-a",
-    lifecycleState: "RUNNING",
-    operationalStatus: "NOMINAL",
+    lifecycleState: options.lifecycleState ?? "RUNNING",
+    operationalStatus: options.operationalStatus ?? "NOMINAL",
     createdAt: updatedAt,
-    updatedAt
+    updatedAt,
+    ...(options.failureReason ? { failureReason: options.failureReason } : {})
   };
 }

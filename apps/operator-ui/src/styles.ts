@@ -336,6 +336,7 @@ dd small {
 .mission-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 10px;
   width: 100%;
   min-height: 62px;
@@ -347,13 +348,25 @@ dd small {
   text-align: left;
 }
 
+.mission-row .status-pill {
+  justify-self: end;
+  max-width: 150px;
+}
+
 .mission-row:hover,
 .mission-row.selected {
   border-color: var(--focus);
   background: #f8fbff;
 }
 
+.mission-copy {
+  display: grid;
+  min-width: 0;
+}
+
 .mission-id {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -366,6 +379,15 @@ dd small {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+.mission-reason {
+  margin-top: 4px;
+  color: var(--degraded-text);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .empty-state {

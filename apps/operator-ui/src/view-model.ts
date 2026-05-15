@@ -28,6 +28,29 @@ export interface EventSummary {
   readonly tone: StatusTone;
 }
 
+/** Create-mission button state derived from robot assignment and mission state. */
+export interface MissionCreationAvailability {
+  readonly canCreate: boolean;
+  readonly buttonLabel: string;
+  readonly message?: string;
+  readonly blockingMissionId?: string;
+}
+
+/** Human wording for domain rejection codes that can surface in API responses. */
+const REJECTION_REASON_MESSAGES = {
+  COMMAND_EXPIRED: "The command expired before it could be dispatched",
+  COMMAND_PAYLOAD_INVALID: "The command payload is invalid",
+  COMMAND_TTL_INVALID: "The command expiration is invalid",
+  COMMAND_TYPE_NOT_ALLOWED: "This command type is not allowed",
+  DUPLICATE_COMMAND_ID: "A command with this id already exists",
+  IDEMPOTENCY_KEY_REUSE_CONFLICT:
+    "The idempotency key was reused with different mission details",
+  LOW_BATTERY: "The robot battery is below the safety threshold",
+  RECONCILIATION_IN_PROGRESS: "The robot is reconnecting and being reconciled",
+  ROBOT_ALREADY_ASSIGNED: "The robot already has an active mission",
+  ROBOT_TELEMETRY_STALE: "The robot telemetry is stale"
+} as const;
+
 /** Maps robot connectivity into stable CSS/status tones. */
 export function statusToneForConnection(
   state: RobotConnectionState | undefined
@@ -65,6 +88,78 @@ export function isActiveMissionState(state: MissionLifecycleState): boolean {
     "TIMED_OUT",
     "MANUAL_REVIEW"
   ].includes(state);
+}
+
+/** Decides whether the operator can create another mission for the selected robot. */
+export function missionCreationAvailability(
+  missions: readonly MissionSnapshot[],
+  robot: RobotSnapshot | undefined
+): MissionCreationAvailability {
+  const activeMissionId = robot?.activeMissionId;
+  if (!robot || !activeMissionId) {
+    return { canCreate: true, buttonLabel: "Create Mission" };
+  }
+
+  const activeMission = missions.find(
+    (mission) => mission.missionId === activeMissionId
+  );
+  if (activeMission && !isActiveMissionState(activeMission.lifecycleState)) {
+    return { canCreate: true, buttonLabel: "Create Mission" };
+  }
+
+  return {
+    canCreate: false,
+    buttonLabel: "Active Mission In Progress",
+    blockingMissionId: activeMissionId,
+    message: `Robot ${robot.robotId} is already working on mission ${activeMissionId}. Cancel or finish that mission before creating another GO_TO_POSE.`
+  };
+}
+
+/** Converts a dispatch rejection code into concise operator-facing wording. */
+export function formatRejectionReason(reason: string | undefined): string | undefined {
+  if (!reason) {
+    return undefined;
+  }
+
+  if (hasKnownRejectionReason(reason)) {
+    return REJECTION_REASON_MESSAGES[reason];
+  }
+
+  return humanizeReasonCode(reason);
+}
+
+/** Builds the action-message text used after Fleet Platform rejects a command. */
+export function formatCommandRejectionMessage(reason: string | undefined): string {
+  const detail = formatRejectionReason(reason);
+  if (!detail) {
+    return "Mission request was rejected by Fleet Platform.";
+  }
+
+  if (reason === "ROBOT_ALREADY_ASSIGNED") {
+    return `${detail}. Cancel or finish the active mission before creating another GO_TO_POSE.`;
+  }
+
+  return `Mission request rejected: ${detail}.`;
+}
+
+/** Explains terminal blocked/rejected mission rows when the backend provides a reason. */
+export function formatMissionFailureReason(
+  mission: MissionSnapshot
+): string | undefined {
+  const reason = formatRejectionReason(mission.failureReason);
+  if (reason) {
+    return reason;
+  }
+
+  if (mission.lifecycleState === "SAFETY_BLOCKED") {
+    return "Blocked by platform safety policy";
+  }
+
+  if (mission.lifecycleState === "REJECTED") {
+    return "Rejected by platform policy";
+  }
+
+  return undefined;
 }
 
 /** Sorts newest missions first for a compact operator list. */
@@ -243,4 +338,21 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+/** Narrows arbitrary strings to the rejection codes with hand-written copy. */
+function hasKnownRejectionReason(
+  reason: string
+): reason is keyof typeof REJECTION_REASON_MESSAGES {
+  return Object.prototype.hasOwnProperty.call(REJECTION_REASON_MESSAGES, reason);
+}
+
+/** Falls back to readable title case for new backend rejection codes. */
+function humanizeReasonCode(reason: string): string {
+  return reason
+    .toLowerCase()
+    .split("_")
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
