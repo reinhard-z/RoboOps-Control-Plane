@@ -231,6 +231,67 @@ describe("phase 2 fleet platform API and edge gateway", () => {
     });
   });
 
+  it("requires the demo admin token and resets in-memory demo state", async () => {
+    await closeRuntime(runtime);
+
+    runtime = createFleetPlatformRuntime({
+      config: {
+        host: "127.0.0.1",
+        port: 0,
+        demoMode: true,
+        demoAdminToken: "local-demo-token",
+        demoRobotId: "robot-a",
+        corsAllowOrigin: "*",
+        defaultCommandTtlMs: 10_000,
+        telemetryFreshnessSweepMs: 50
+      },
+      logger: new SilentStructuredLogger()
+    });
+    await listenFleetPlatform(runtime);
+    const address = runtime.server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    edgeUrl = `ws://127.0.0.1:${address.port}/edge/connect?robotId=robot-a`;
+
+    const missingToken = await postJson(`${baseUrl}/demo/scenarios/reset`, {});
+    expect(missingToken.status).toBe(401);
+
+    const incident = await postJson(
+      `${baseUrl}/demo/scenarios/incident/start`,
+      {},
+      { "X-Demo-Admin-Token": "local-demo-token" }
+    );
+    expect(incident.status).toBe(202);
+
+    const missionsBeforeReset = await fetch(`${baseUrl}/missions`);
+    const missionsBeforeResetBody = (await missionsBeforeReset.json()) as {
+      readonly missions: readonly unknown[];
+    };
+    expect(missionsBeforeResetBody.missions).toHaveLength(1);
+
+    const reset = await postJson(
+      `${baseUrl}/demo/scenarios/reset`,
+      {},
+      { "X-Demo-Admin-Token": "local-demo-token" }
+    );
+    expect(reset.status).toBe(200);
+
+    const missionsAfterReset = await fetch(`${baseUrl}/missions`);
+    const missionsAfterResetBody = (await missionsAfterReset.json()) as {
+      readonly missions: readonly unknown[];
+    };
+    expect(missionsAfterResetBody.missions).toEqual([]);
+
+    const robotResponse = await fetch(`${baseUrl}/robots/robot-a`);
+    const robotBody = (await robotResponse.json()) as {
+      readonly robot: {
+        readonly connectionState: string;
+        readonly activeMissionId?: string;
+      };
+    };
+    expect(robotBody.robot.connectionState).toBe("ONLINE");
+    expect(robotBody.robot.activeMissionId).toBeUndefined();
+  });
+
   it("periodically marks robots degraded when telemetry becomes stale", async () => {
     await closeRuntime(runtime);
 
@@ -343,11 +404,12 @@ function parseSocketJson(data: unknown): Record<string, unknown> {
 /** Posts JSON and returns both status and parsed JSON body. */
 async function postJson(
   url: string,
-  body: unknown
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {}
 ): Promise<{ readonly status: number; readonly body: unknown }> {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
   return { status: response.status, body: await response.json() };

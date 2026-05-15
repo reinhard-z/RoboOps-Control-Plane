@@ -5,7 +5,10 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
   const browserConfig = {
     apiBaseUrl: config.apiBaseUrl,
     robotId: config.robotId,
-    pollIntervalMs: config.pollIntervalMs
+    pollIntervalMs: config.pollIntervalMs,
+    ...(demoControlsEnabled(config)
+      ? { demo: { adminToken: config.demoAdminToken } }
+      : {})
   };
 
   return `<!doctype html>
@@ -87,6 +90,7 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
           <button id="cancel-mission-button" class="secondary-button" type="button" disabled>
             Cancel Mission
           </button>
+          ${demoControlsEnabled(config) ? renderDemoControls() : ""}
           <p id="action-message" class="action-message" role="status"></p>
         </section>
 
@@ -144,6 +148,32 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
     <script type="module" src="/assets/client.js"></script>
   </body>
 </html>`;
+}
+
+/** Returns true only when the local UI has enough config to call demo admin endpoints. */
+function demoControlsEnabled(
+  config: OperatorUiConfig
+): config is OperatorUiConfig & { readonly demoAdminToken: string } {
+  return config.demoMode && Boolean(config.demoAdminToken);
+}
+
+/** Renders local-only controls for resetting and steering the incident demo. */
+function renderDemoControls(): string {
+  return `<div class="demo-controls" aria-label="Demo controls">
+            <p class="demo-controls-title">Demo</p>
+            <button id="demo-reset-button" class="secondary-button" type="button">
+              Reset State
+            </button>
+            <button id="demo-start-button" type="button">
+              Start Clean Mission
+            </button>
+            <button id="demo-stale-button" class="secondary-button" type="button">
+              Mark Stale
+            </button>
+            <button id="demo-reconnect-button" class="secondary-button" type="button">
+              Reconnect
+            </button>
+          </div>`;
 }
 
 /** Escapes JSON for safe placement inside an inline script tag. */

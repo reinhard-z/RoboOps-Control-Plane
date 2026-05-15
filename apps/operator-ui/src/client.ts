@@ -31,6 +31,9 @@ interface BrowserOperatorConfig {
   readonly apiBaseUrl: string;
   readonly robotId: string;
   readonly pollIntervalMs: number;
+  readonly demo?: {
+    readonly adminToken: string;
+  };
 }
 
 /** Mutable UI state kept small enough to render directly without a framework. */
@@ -42,7 +45,14 @@ interface AppState {
   streamState: "CONNECTING" | "OPEN" | "RECONNECTING";
   actionMessage: string;
   actionMessageIsError: boolean;
-  busyAction: "create" | "cancel" | undefined;
+  busyAction:
+    | "create"
+    | "cancel"
+    | "demo-reset"
+    | "demo-start"
+    | "demo-stale"
+    | "demo-reconnect"
+    | undefined;
 }
 
 /** Cached DOM references for the single-page console. */
@@ -63,6 +73,10 @@ interface ViewRefs {
   readonly targetTheta: HTMLInputElement;
   readonly createMissionButton: HTMLButtonElement;
   readonly cancelMissionButton: HTMLButtonElement;
+  readonly demoResetButton?: HTMLButtonElement;
+  readonly demoStartButton?: HTMLButtonElement;
+  readonly demoStaleButton?: HTMLButtonElement;
+  readonly demoReconnectButton?: HTMLButtonElement;
   readonly actionMessage: HTMLElement;
   readonly missionList: HTMLElement;
   readonly missionLifecycle: HTMLElement;
@@ -100,6 +114,18 @@ async function boot(): Promise<void> {
   });
   refs.cancelMissionButton.addEventListener("click", () => {
     void cancelSelectedMission();
+  });
+  refs.demoResetButton?.addEventListener("click", () => {
+    void resetDemoState();
+  });
+  refs.demoStartButton?.addEventListener("click", () => {
+    void startCleanDemoMission();
+  });
+  refs.demoStaleButton?.addEventListener("click", () => {
+    void triggerDemoStaleTelemetry();
+  });
+  refs.demoReconnectButton?.addEventListener("click", () => {
+    void triggerDemoReconnect();
   });
 
   await refreshSnapshot();
@@ -195,6 +221,99 @@ async function cancelSelectedMission(): Promise<void> {
       body.result.status === "ACCEPTED"
         ? `Cancel dispatched (${body.deliveryCount} edge delivery)`
         : `Cancel ${body.result.status.toLowerCase()}`;
+    await refreshSnapshot();
+  } catch (error) {
+    state.actionMessage = errorMessage(error);
+    state.actionMessageIsError = true;
+  } finally {
+    state.busyAction = undefined;
+    render();
+  }
+}
+
+/** Resets in-memory platform state back to a clean robot-a demo baseline. */
+async function resetDemoState(): Promise<void> {
+  state.busyAction = "demo-reset";
+  state.actionMessage = "Resetting demo state";
+  state.actionMessageIsError = false;
+  render();
+
+  try {
+    await requestDemoJson("/demo/scenarios/reset");
+    state.selectedMissionId = undefined;
+    state.events = [];
+    state.actionMessage = "Demo state reset";
+    await refreshSnapshot();
+  } catch (error) {
+    state.actionMessage = errorMessage(error);
+    state.actionMessageIsError = true;
+  } finally {
+    state.busyAction = undefined;
+    render();
+  }
+}
+
+/** Runs a clean normal incident start by clearing stale demo state before dispatch. */
+async function startCleanDemoMission(): Promise<void> {
+  state.busyAction = "demo-start";
+  state.actionMessage = "Starting clean demo mission";
+  state.actionMessageIsError = false;
+  render();
+
+  try {
+    await requestDemoJson("/demo/scenarios/reset");
+    state.events = [];
+    state.selectedMissionId = undefined;
+    const body = await requestDemoJson<MissionCommandResponse>(
+      "/demo/scenarios/incident/start"
+    );
+    if (body.result.mission) {
+      state.selectedMissionId = body.result.mission.missionId;
+    }
+    state.actionMessage =
+      body.result.status === "ACCEPTED"
+        ? `Demo mission dispatched (${body.deliveryCount} edge delivery)`
+        : `Demo mission ${body.result.status.toLowerCase()}`;
+    await refreshSnapshot();
+  } catch (error) {
+    state.actionMessage = errorMessage(error);
+    state.actionMessageIsError = true;
+  } finally {
+    state.busyAction = undefined;
+    render();
+  }
+}
+
+/** Forces the local demo robot through the stale telemetry freshness path. */
+async function triggerDemoStaleTelemetry(): Promise<void> {
+  state.busyAction = "demo-stale";
+  state.actionMessage = "Marking telemetry stale";
+  state.actionMessageIsError = false;
+  render();
+
+  try {
+    await requestDemoJson("/demo/faults/disconnect");
+    state.actionMessage = "Telemetry marked stale";
+    await refreshSnapshot();
+  } catch (error) {
+    state.actionMessage = errorMessage(error);
+    state.actionMessageIsError = true;
+  } finally {
+    state.busyAction = undefined;
+    render();
+  }
+}
+
+/** Drives the local demo robot through reconnect reconciliation without restarting processes. */
+async function triggerDemoReconnect(): Promise<void> {
+  state.busyAction = "demo-reconnect";
+  state.actionMessage = "Running reconnect";
+  state.actionMessageIsError = false;
+  render();
+
+  try {
+    await requestDemoJson("/demo/faults/reconnect");
+    state.actionMessage = "Reconnect processed";
     await refreshSnapshot();
   } catch (error) {
     state.actionMessage = errorMessage(error);
@@ -388,6 +507,16 @@ function renderActionState(): void {
     state.busyAction !== undefined ||
     !mission ||
     !isActiveMissionState(mission.lifecycleState);
+  for (const button of [
+    refs.demoResetButton,
+    refs.demoStartButton,
+    refs.demoStaleButton,
+    refs.demoReconnectButton
+  ]) {
+    if (button) {
+      button.disabled = state.busyAction !== undefined;
+    }
+  }
 }
 
 /** Updates relative telemetry and event ages without refetching server state. */
@@ -466,11 +595,21 @@ function setStatusPill(element: HTMLElement, label: string, tone: StatusTone): v
 /** Sends and receives JSON from the Fleet Platform API. */
 async function requestJson<T>(
   path: string,
-  init: { readonly method?: "GET" | "POST"; readonly body?: unknown } = {}
+  init: {
+    readonly method?: "GET" | "POST";
+    readonly body?: unknown;
+    readonly headers?: Readonly<Record<string, string>>;
+  } = {}
 ): Promise<T> {
-  const requestInit: RequestInit = { method: init.method ?? "GET" };
+  const requestInit: RequestInit = {
+    method: init.method ?? "GET",
+    ...(init.headers ? { headers: init.headers } : {})
+  };
   if (init.body !== undefined) {
-    requestInit.headers = { "Content-Type": "application/json" };
+    requestInit.headers = {
+      ...init.headers,
+      "Content-Type": "application/json"
+    };
     requestInit.body = JSON.stringify(init.body);
   }
 
@@ -491,6 +630,18 @@ async function requestJson<T>(
     throw new Error(parsedBody.reason);
   }
   return parsedBody.value as T;
+}
+
+/** Calls one protected demo endpoint with the configured local admin token. */
+async function requestDemoJson<T = unknown>(path: string): Promise<T> {
+  const demo = config.demo;
+  if (!demo) {
+    throw new Error("demo controls are not configured");
+  }
+  return requestJson<T>(path, {
+    method: "POST",
+    headers: { "X-Demo-Admin-Token": demo.adminToken }
+  });
 }
 
 /** Parses JSON responses without hiding HTTP status failures behind SyntaxError. */
@@ -568,12 +719,19 @@ function readBrowserConfig(): BrowserOperatorConfig {
   return {
     apiBaseUrl: injected?.apiBaseUrl ?? "http://127.0.0.1:4010",
     robotId: injected?.robotId ?? "robot-a",
-    pollIntervalMs: injected?.pollIntervalMs ?? 2_000
+    pollIntervalMs: injected?.pollIntervalMs ?? 2_000,
+    ...(isBrowserDemoConfig(injected?.demo) ? { demo: injected.demo } : {})
   };
 }
 
 /** Finds required DOM nodes at startup so render functions can stay simple. */
 function collectViewRefs(): ViewRefs {
+  const demoResetButton = optionalElement<HTMLButtonElement>("demo-reset-button");
+  const demoStartButton = optionalElement<HTMLButtonElement>("demo-start-button");
+  const demoStaleButton = optionalElement<HTMLButtonElement>("demo-stale-button");
+  const demoReconnectButton =
+    optionalElement<HTMLButtonElement>("demo-reconnect-button");
+
   return {
     apiLabel: requiredElement("api-label"),
     streamDot: requiredElement("stream-dot"),
@@ -591,6 +749,10 @@ function collectViewRefs(): ViewRefs {
     targetTheta: requiredElement<HTMLInputElement>("target-theta"),
     createMissionButton: requiredElement<HTMLButtonElement>("create-mission-button"),
     cancelMissionButton: requiredElement<HTMLButtonElement>("cancel-mission-button"),
+    ...(demoResetButton ? { demoResetButton } : {}),
+    ...(demoStartButton ? { demoStartButton } : {}),
+    ...(demoStaleButton ? { demoStaleButton } : {}),
+    ...(demoReconnectButton ? { demoReconnectButton } : {}),
     actionMessage: requiredElement("action-message"),
     missionList: requiredElement("mission-list"),
     missionLifecycle: requiredElement("mission-lifecycle"),
@@ -601,6 +763,12 @@ function collectViewRefs(): ViewRefs {
   };
 }
 
+/** Reads an optional DOM node when demo-only controls are not rendered. */
+function optionalElement<T extends HTMLElement>(id: string): T | undefined {
+  const element = document.getElementById(id);
+  return element ? element as T : undefined;
+}
+
 /** Returns a typed DOM element or fails fast for broken HTML templates. */
 function requiredElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -608,6 +776,17 @@ function requiredElement<T extends HTMLElement>(id: string): T {
     throw new Error(`missing required element #${id}`);
   }
   return element as T;
+}
+
+/** Validates injected demo config before enabling protected UI actions. */
+function isBrowserDemoConfig(
+  value: unknown
+): value is NonNullable<BrowserOperatorConfig["demo"]> {
+  return (
+    isRecord(value) &&
+    typeof value["adminToken"] === "string" &&
+    value["adminToken"].length > 0
+  );
 }
 
 /** Checks whether a JSON-like value is a non-array object. */

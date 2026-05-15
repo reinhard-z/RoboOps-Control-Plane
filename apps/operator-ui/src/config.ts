@@ -10,12 +10,16 @@ export interface OperatorUiConfig {
   readonly apiBaseUrl: string;
   readonly robotId: string;
   readonly pollIntervalMs: number;
+  readonly demoMode: boolean;
+  readonly demoAdminToken?: string;
 }
 
 /** Converts environment variables into a typed Operator UI configuration. */
 export function loadOperatorUiConfig(
   env: NodeJS.ProcessEnv = process.env
 ): OperatorUiConfig {
+  const demoAdminToken =
+    env["OPERATOR_DEMO_ADMIN_TOKEN"] ?? env["DEMO_ADMIN_TOKEN"];
   return {
     host: env["OPERATOR_UI_HOST"] ?? env["HOST"] ?? defaultHost,
     port: parsePort(env["OPERATOR_UI_PORT"] ?? env["PORT"], defaultPort),
@@ -25,7 +29,9 @@ export function loadOperatorUiConfig(
         defaultApiBaseUrl
     ),
     robotId: env["OPERATOR_ROBOT_ID"] ?? env["ROBOT_ID"] ?? defaultRobotId,
-    pollIntervalMs: parsePositiveInteger(env["OPERATOR_POLL_INTERVAL_MS"], 2_000)
+    pollIntervalMs: parsePositiveInteger(env["OPERATOR_POLL_INTERVAL_MS"], 2_000),
+    demoMode: env["OPERATOR_DEMO_MODE"] === "true",
+    ...(demoAdminToken ? { demoAdminToken } : {})
   };
 }
 

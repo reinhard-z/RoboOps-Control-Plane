@@ -20,7 +20,9 @@ operator console slice for the incident demo.
 - `apps/operator-ui`: lightweight TypeScript browser app served by a tiny local
   Node server. It reads Fleet Platform REST state, subscribes to `/stream/events`,
   creates `GO_TO_POSE` missions, cancels selected missions, and highlights
-  `ONLINE`, `STALE`, `DEGRADED`, `OFFLINE`, and `RECONNECTING` states.
+  `ONLINE`, `STALE`, `DEGRADED`, `OFFLINE`, and `RECONNECTING` states. Local
+  demo controls are rendered only when explicitly configured with demo mode and
+  a demo admin token.
 
 ## What Exists Today
 
@@ -176,9 +178,16 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 
 ## Local Demo Wiring
 
-Run the Fleet Platform on its default local port:
+Run the Fleet Platform on its default local port. Demo admin endpoints are
+disabled unless both `DEMO_MODE=true` and `DEMO_ADMIN_TOKEN` are set:
 
 ```sh
+pnpm --filter @roboops/fleet-platform dev
+```
+
+```sh
+DEMO_MODE=true \
+DEMO_ADMIN_TOKEN=local-demo-token \
 pnpm --filter @roboops/fleet-platform dev
 ```
 
@@ -192,11 +201,24 @@ SIM_SCENARIO=normal \
 pnpm --filter @roboops/cloud-edge-simulator dev
 ```
 
-Run the Operator UI in a third terminal and open `http://127.0.0.1:4020`:
+Use `SIM_SCENARIO=stale-telemetry` for the stale heartbeat path, or
+`SIM_SCENARIO=reconnect` for the disconnect/handshake/recovery path.
+
+Run the Operator UI in a third terminal and open `http://127.0.0.1:4020`.
+Demo controls stay hidden unless `OPERATOR_DEMO_MODE=true` and a demo admin
+token are present:
 
 ```sh
 FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
 OPERATOR_ROBOT_ID=robot-a \
+pnpm --filter @roboops/operator-ui dev
+```
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+OPERATOR_ROBOT_ID=robot-a \
+OPERATOR_DEMO_MODE=true \
+OPERATOR_DEMO_ADMIN_TOKEN=local-demo-token \
 pnpm --filter @roboops/operator-ui dev
 ```
 
@@ -205,3 +227,9 @@ pnpm --filter @roboops/operator-ui dev
 the platform sweep can mark the robot and active mission degraded.
 `SIM_SCENARIO=reconnect` accepts the command, reconnects, sends a reconnect
 handshake, and resumes telemetry.
+
+The Operator UI demo controls call the existing `/demo/*` endpoints with the
+configured token. `Reset State` replaces in-memory Fleet Platform state with a
+clean `robot-a` baseline, and `Start Clean Mission` resets before dispatching
+the normal demo `GO_TO_POSE` so prior smoke-test missions do not confuse the
+demo.

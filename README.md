@@ -30,13 +30,25 @@ client that ships with modern Node.
 
 ## Local Incident Demo
 
-Terminal 1, start the Fleet Platform API:
+The demo endpoints and UI demo controls are disabled by default. For the local
+reset/control loop, use the same demo token in the Fleet Platform and Operator
+UI terminals.
+
+Terminal 1, start the Fleet Platform API without demo admin endpoints:
 
 ```sh
 pnpm --filter @roboops/fleet-platform dev
 ```
 
-Terminal 2, start the cloud-edge simulator:
+Or start it with protected demo reset/control endpoints enabled:
+
+```sh
+DEMO_MODE=true \
+DEMO_ADMIN_TOKEN=local-demo-token \
+pnpm --filter @roboops/fleet-platform dev
+```
+
+Terminal 2, start the cloud-edge simulator in normal mode:
 
 ```sh
 FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
@@ -46,7 +58,29 @@ SIM_SCENARIO=normal \
 pnpm --filter @roboops/cloud-edge-simulator dev
 ```
 
-Terminal 3, start the Operator UI:
+Use the same command with `SIM_SCENARIO=stale-telemetry` to accept the mission
+and then stop telemetry so Fleet Platform marks the robot degraded:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+ROBOT_ID=robot-a \
+EDGE_AGENT_VERSION=sim-0.1.0 \
+SIM_SCENARIO=stale-telemetry \
+pnpm --filter @roboops/cloud-edge-simulator dev
+```
+
+Use `SIM_SCENARIO=reconnect` to accept the mission, disconnect, reconnect with
+a handshake, and resume telemetry:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+ROBOT_ID=robot-a \
+EDGE_AGENT_VERSION=sim-0.1.0 \
+SIM_SCENARIO=reconnect \
+pnpm --filter @roboops/cloud-edge-simulator dev
+```
+
+Terminal 3, start the Operator UI with demo controls disabled:
 
 ```sh
 FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
@@ -54,9 +88,34 @@ OPERATOR_ROBOT_ID=robot-a \
 pnpm --filter @roboops/operator-ui dev
 ```
 
-Open `http://127.0.0.1:4020` and use **Create Mission** to dispatch the
-default `GO_TO_POSE` command. The mission list and live event feed update from
-Fleet Platform REST/SSE responses.
+Or start it with demo controls enabled:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+OPERATOR_ROBOT_ID=robot-a \
+OPERATOR_DEMO_MODE=true \
+OPERATOR_DEMO_ADMIN_TOKEN=local-demo-token \
+pnpm --filter @roboops/operator-ui dev
+```
+
+Open `http://127.0.0.1:4020`. With demo controls disabled, use **Create
+Mission** to dispatch the default `GO_TO_POSE` command. With demo controls
+enabled, use **Reset State** to clear residual in-memory missions, or **Start
+Clean Mission** to reset and dispatch the normal demo `GO_TO_POSE` in one
+action. **Mark Stale** and **Reconnect** drive the protected demo fault
+endpoints when you want to demonstrate those paths without restarting every
+process.
+
+The protected demo endpoints are also available over HTTP when Fleet Platform
+is running with `DEMO_MODE=true`:
+
+```sh
+curl -s -X POST http://127.0.0.1:4010/demo/scenarios/reset \
+  -H 'x-demo-admin-token: local-demo-token'
+
+curl -s -X POST http://127.0.0.1:4010/demo/scenarios/incident/start \
+  -H 'x-demo-admin-token: local-demo-token'
+```
 
 The same flow is still available over HTTP:
 
@@ -75,12 +134,13 @@ curl -s http://127.0.0.1:4010/missions/<missionId>
 curl -s http://127.0.0.1:4010/robots/robot-a
 ```
 
-To demo stale telemetry, restart the simulator with
-`SIM_SCENARIO=stale-telemetry`, create the mission, then wait about 11 seconds
-before reading `/robots/robot-a`. The platform freshness sweep should move the
-robot to `DEGRADED` while the mission stays active.
+For stale telemetry with the simulator scenario, restart only the simulator with
+`SIM_SCENARIO=stale-telemetry`, create a clean mission, then wait about 11
+seconds before reading `/robots/robot-a`. The platform freshness sweep should
+move the robot to `DEGRADED` while the mission stays active.
 
-To demo reconnect recovery, use `SIM_SCENARIO=reconnect`. The simulator accepts
+For reconnect recovery with the simulator scenario, restart only the simulator
+with `SIM_SCENARIO=reconnect` and start a clean mission. The simulator accepts
 the motion command, disconnects, reconnects with a reconnect handshake, and then
 resumes telemetry.
 

@@ -72,6 +72,16 @@ button:hover:not(:disabled) {
   background: #fee2e2;
 }
 
+.demo-controls .secondary-button {
+  margin-top: 0;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.demo-controls .secondary-button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+
 .app-shell {
   min-height: 100vh;
   padding: 20px;
@@ -298,6 +308,24 @@ dd small {
 
 .action-message.error {
   color: var(--danger-text);
+}
+
+.demo-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.demo-controls-title {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .mission-list {
