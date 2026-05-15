@@ -1,10 +1,11 @@
 # Current Architecture
 
-Snapshot date: 2026-05-11.
+Snapshot date: 2026-05-15.
 
 The important thing to know: the domain/protocol core is implemented, and
-`apps/fleet-platform` now has the first Phase 2 API/gateway slice. The other
-runtime apps are still placeholders.
+`apps/fleet-platform` now has the first Phase 2 API/gateway slice.
+`apps/cloud-edge-simulator` provides the local edge process needed to drive the
+incident demo without ROS 2. `apps/operator-ui` is still a placeholder.
 
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
@@ -12,6 +13,9 @@ runtime apps are still placeholders.
 - Phase 1 tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: in-memory HTTP API, SSE stream, edge WebSocket gateway,
   queued command delivery, cancel command flow, and telemetry freshness sweep.
+- `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
+  `edge.hello`, accepts `GO_TO_POSE` and `CANCEL_MISSION`, emits accepted acks,
+  sends heartbeats, and can simulate stale telemetry or reconnect handshakes.
 
 ## What Exists Today
 
@@ -24,16 +28,18 @@ flowchart LR
     Domain["fleet-domain<br/>pure reducers"]
     Protocol["fleet-protocol<br/>contracts + schemas"]
     Api["fleet-platform<br/>HTTP/SSE/WebSocket<br/>in-memory state"]
+    Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
     Tests --> Domain
     Tests --> Protocol
     Domain --> Protocol
     Api --> Domain
     Api --> Protocol
+    Simulator --> Protocol
+    Simulator --> Api
   end
 
   subgraph Placeholders["Scaffolded for later phases"]
     UI["operator-ui"]
-    Simulator["cloud-edge-simulator"]
     Persistence["fleet-persistence"]
     Worker["event-worker"]
     Observability["observability"]
@@ -65,12 +71,12 @@ flowchart LR
   UI --> Protocol
 ```
 
-Phase 2 is now partially implemented in `apps/fleet-platform`. The app exposes
-REST/SSE/WebSocket edges and keeps mission decisions inside `fleet-domain`.
-Queued commands are delivered after the edge sends `edge.hello`, which avoids
-double-delivery between socket upgrade and the first edge identity message.
-Remaining Phase 2 hardening work is mostly endpoint breadth and scenario depth,
-not the basic transport skeleton.
+Phase 2 now has the in-memory platform and a local simulator. The platform
+exposes REST/SSE/WebSocket edges and keeps mission decisions inside
+`fleet-domain`. Queued commands are delivered after the edge sends `edge.hello`,
+which avoids double-delivery between socket upgrade and the first edge identity
+message. The simulator connects outbound to `/edge/connect?robotId=...` and
+uses the same protocol payloads future ROS 2 edge code must produce.
 
 ## Mission Incident Flow
 
@@ -147,7 +153,8 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 
 ## Phase 2 Build Notes
 
-- Continue in `apps/fleet-platform`; the first API/gateway slice is implemented.
+- Continue in `apps/fleet-platform` and `apps/cloud-edge-simulator`; the first
+  API/gateway and local edge slices are implemented.
 - Keep a single in-memory `DomainState` behind small repository/service functions.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
@@ -159,3 +166,27 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
   - REST for operator commands and reads
   - SSE for browser live updates
   - WebSocket for edge commands, acks, telemetry, and reconnect handshakes
+
+## Local Demo Wiring
+
+Run the Fleet Platform on its default local port:
+
+```sh
+pnpm --filter @roboops/fleet-platform dev
+```
+
+Run the simulator in a second terminal:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+ROBOT_ID=robot-a \
+EDGE_AGENT_VERSION=sim-0.1.0 \
+SIM_SCENARIO=normal \
+pnpm --filter @roboops/cloud-edge-simulator dev
+```
+
+`SIM_SCENARIO=normal` accepts a motion command and keeps telemetry fresh.
+`SIM_SCENARIO=stale-telemetry` accepts the command and then stops telemetry so
+the platform sweep can mark the robot and active mission degraded.
+`SIM_SCENARIO=reconnect` accepts the command, reconnects, sends a reconnect
+handshake, and resumes telemetry.
