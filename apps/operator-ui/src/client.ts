@@ -1,3 +1,4 @@
+import { FleetPlatformApiClient } from "./api-client.js";
 import {
   formatBattery,
   formatCommandRejectionMessage,
@@ -16,7 +17,6 @@ import {
   type StatusTone
 } from "./view-model.js";
 import type {
-  MissionCommandResponse,
   MissionSnapshot,
   PlatformStreamEvent,
   PoseTarget,
@@ -90,15 +90,11 @@ interface ViewRefs {
   readonly eventFeed: HTMLElement;
 }
 
-/** Request options for Fleet Platform JSON calls from the browser console. */
-interface RequestJsonOptions {
-  readonly method?: "GET" | "POST";
-  readonly body?: unknown;
-  readonly headers?: Readonly<Record<string, string>>;
-  readonly acceptCommandRejection?: boolean;
-}
-
 const config = readBrowserConfig();
+const api = new FleetPlatformApiClient({
+  apiBaseUrl: config.apiBaseUrl,
+  ...(config.demo ? { demoAdminToken: config.demo.adminToken } : {})
+});
 const state: AppState = {
   robot: undefined,
   missions: [],
@@ -151,15 +147,13 @@ async function boot(): Promise<void> {
 /** Loads robot and mission snapshots from Fleet Platform concurrently. */
 async function refreshSnapshot(): Promise<void> {
   try {
-    const [robotBody, missionsBody] = await Promise.all([
-      requestJson<{ readonly robot: RobotSnapshot }>(
-        `/robots/${encodeURIComponent(config.robotId)}`
-      ),
-      requestJson<{ readonly missions: readonly MissionSnapshot[] }>("/missions")
+    const [robot, missions] = await Promise.all([
+      api.getRobot(config.robotId),
+      api.listMissions()
     ]);
 
-    state.robot = robotBody.robot;
-    state.missions = sortMissions(missionsBody.missions);
+    state.robot = robot;
+    state.missions = sortMissions(missions);
     const selected = selectDefaultMission(
       state.missions,
       state.robot,
@@ -191,16 +185,7 @@ async function createMission(): Promise<void> {
   render();
 
   try {
-    const body = await requestJson<MissionCommandResponse>("/missions", {
-      method: "POST",
-      acceptCommandRejection: true,
-      body: {
-        robotId: config.robotId,
-        type: "GO_TO_POSE",
-        safetyClass: "NORMAL",
-        payload: { target: readPoseTarget() }
-      }
-    });
+    const body = await api.createGoToPoseMission(config.robotId, readPoseTarget());
 
     if (body.result.mission) {
       state.selectedMissionId = body.result.mission.missionId;
@@ -233,12 +218,9 @@ async function cancelSelectedMission(): Promise<void> {
   render();
 
   try {
-    const body = await requestJson<MissionCommandResponse>(
-      `/missions/${encodeURIComponent(mission.missionId)}/cancel`,
-      {
-        method: "POST",
-        body: { reason: "operator requested cancel from UI" }
-      }
+    const body = await api.cancelMission(
+      mission.missionId,
+      "operator requested cancel from UI"
     );
     state.actionMessage =
       body.result.status === "ACCEPTED"
@@ -262,7 +244,7 @@ async function resetDemoState(): Promise<void> {
   render();
 
   try {
-    await requestDemoJson("/demo/scenarios/reset");
+    await api.resetDemoState();
     state.selectedMissionId = undefined;
     state.events = [];
     state.actionMessage = "Demo state reset";
@@ -284,12 +266,10 @@ async function startCleanDemoMission(): Promise<void> {
   render();
 
   try {
-    await requestDemoJson("/demo/scenarios/reset");
+    await api.resetDemoState();
     state.events = [];
     state.selectedMissionId = undefined;
-    const body = await requestDemoJson<MissionCommandResponse>(
-      "/demo/scenarios/incident/start"
-    );
+    const body = await api.startIncidentDemo();
     if (body.result.mission) {
       state.selectedMissionId = body.result.mission.missionId;
     }
@@ -315,7 +295,7 @@ async function triggerDemoStaleTelemetry(): Promise<void> {
   render();
 
   try {
-    await requestDemoJson("/demo/faults/disconnect");
+    await api.markDemoTelemetryStale();
     state.actionMessage = "Telemetry marked stale";
     await refreshSnapshot();
   } catch (error) {
@@ -335,7 +315,7 @@ async function triggerDemoReconnect(): Promise<void> {
   render();
 
   try {
-    await requestDemoJson("/demo/faults/reconnect");
+    await api.reconnectDemoRobot();
     state.actionMessage = "Reconnect processed";
     await refreshSnapshot();
   } catch (error) {
@@ -349,7 +329,7 @@ async function triggerDemoReconnect(): Promise<void> {
 
 /** Opens the Fleet Platform SSE feed and refreshes snapshots after each event. */
 function connectEventStream(): void {
-  const stream = new EventSource(apiUrl("/stream/events"));
+  const stream = new EventSource(api.eventStreamUrl());
   for (const eventType of ["platform", "domain", "audit"] as const) {
     stream.addEventListener(eventType, (event) => {
       handleStreamMessage(event as MessageEvent<string>);
@@ -640,127 +620,6 @@ function readNumberInput(input: HTMLInputElement, fallback: number): number {
 function setStatusPill(element: HTMLElement, label: string, tone: StatusTone): void {
   element.textContent = label;
   element.className = `status-pill tone-${tone}`;
-}
-
-/** Sends and receives JSON from the Fleet Platform API. */
-async function requestJson<T>(
-  path: string,
-  init: RequestJsonOptions = {}
-): Promise<T> {
-  const requestInit: RequestInit = {
-    method: init.method ?? "GET",
-    ...(init.headers ? { headers: init.headers } : {})
-  };
-  if (init.body !== undefined) {
-    requestInit.headers = {
-      ...init.headers,
-      "Content-Type": "application/json"
-    };
-    requestInit.body = JSON.stringify(init.body);
-  }
-
-  const response = await fetch(apiUrl(path), requestInit);
-  const text = await response.text();
-  const parsedBody = parseJsonResponseBody(text);
-  if (!response.ok) {
-    if (
-      init.acceptCommandRejection &&
-      parsedBody.ok &&
-      isRejectedMissionCommandResponse(parsedBody.value)
-    ) {
-      return parsedBody.value as T;
-    }
-
-    const detail = parsedBody.ok
-      ? readApiError(parsedBody.value)
-      : parsedBody.reason;
-    throw new Error(
-      detail
-        ? detail
-        : `Fleet Platform request failed (HTTP ${response.status})`
-    );
-  }
-  if (!parsedBody.ok) {
-    throw new Error(parsedBody.reason);
-  }
-  return parsedBody.value as T;
-}
-
-/** Recognizes command rejection bodies that should still update mission UI state. */
-function isRejectedMissionCommandResponse(
-  value: unknown
-): value is MissionCommandResponse {
-  if (!isRecord(value) || !isRecord(value["result"])) {
-    return false;
-  }
-
-  return (
-    value["result"]["status"] === "REJECTED" &&
-    typeof value["deliveryCount"] === "number"
-  );
-}
-
-/** Calls one protected demo endpoint with the configured local admin token. */
-async function requestDemoJson<T = unknown>(path: string): Promise<T> {
-  const demo = config.demo;
-  if (!demo) {
-    throw new Error("demo controls are not configured");
-  }
-  return requestJson<T>(path, {
-    method: "POST",
-    headers: { "X-Demo-Admin-Token": demo.adminToken }
-  });
-}
-
-/** Parses JSON responses without hiding HTTP status failures behind SyntaxError. */
-function parseJsonResponseBody(
-  text: string
-): { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly reason: string } {
-  if (text.length === 0) {
-    return { ok: true, value: undefined };
-  }
-  try {
-    return { ok: true, value: JSON.parse(text) as unknown };
-  } catch {
-    return { ok: false, reason: "response body was not valid JSON" };
-  }
-}
-
-/** Joins API paths without depending on trailing slash configuration. */
-function apiUrl(path: string): string {
-  return `${config.apiBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
-}
-
-/** Extracts Fleet Platform's structured error or command rejection message. */
-function readApiError(body: unknown): string | undefined {
-  const rejectionMessage = readCommandRejectionMessage(body);
-  if (rejectionMessage) {
-    return rejectionMessage;
-  }
-
-  if (!isRecord(body) || !isRecord(body["error"])) {
-    return undefined;
-  }
-  const error = body["error"];
-  const code = typeof error["code"] === "string" ? error["code"] : "API_ERROR";
-  const message =
-    typeof error["message"] === "string" ? error["message"] : "request failed";
-  return `${code}: ${message}`;
-}
-
-/** Reads rejected dispatch responses that intentionally use non-2xx HTTP status. */
-function readCommandRejectionMessage(body: unknown): string | undefined {
-  if (!isRecord(body) || !isRecord(body["result"])) {
-    return undefined;
-  }
-
-  const result = body["result"];
-  if (result["status"] !== "REJECTED") {
-    return undefined;
-  }
-
-  const reason = typeof result["reason"] === "string" ? result["reason"] : undefined;
-  return formatCommandRejectionMessage(reason);
 }
 
 /** Parses the JSON data payload from an SSE browser event. */
