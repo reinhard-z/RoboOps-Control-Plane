@@ -46,7 +46,19 @@ SIM_SCENARIO=normal \
 pnpm --filter @roboops/cloud-edge-simulator dev
 ```
 
-Create a mission over HTTP:
+Terminal 3, start the Operator UI:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+OPERATOR_ROBOT_ID=robot-a \
+pnpm --filter @roboops/operator-ui dev
+```
+
+Open `http://127.0.0.1:4020` and use **Create Mission** to dispatch the
+default `GO_TO_POSE` command. The mission list and live event feed update from
+Fleet Platform REST/SSE responses.
+
+The same flow is still available over HTTP:
 
 ```sh
 curl -s http://127.0.0.1:4010/missions \
@@ -76,4 +88,6 @@ resumes telemetry.
 
 This repository is a pnpm monorepo with shared fleet protocol contracts, a
 domain state machine, an in-memory Fleet Platform API/WebSocket gateway, and a
-local cloud-edge simulator. `apps/operator-ui` remains a placeholder.
+local cloud-edge simulator. `apps/operator-ui` now provides a lightweight local
+operator console for creating/cancelling missions and watching robot freshness,
+mission state, and audit events without curl.

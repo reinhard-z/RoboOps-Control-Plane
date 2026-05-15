@@ -5,7 +5,8 @@ Snapshot date: 2026-05-15.
 The important thing to know: the domain/protocol core is implemented, and
 `apps/fleet-platform` now has the first Phase 2 API/gateway slice.
 `apps/cloud-edge-simulator` provides the local edge process needed to drive the
-incident demo without ROS 2. `apps/operator-ui` is still a placeholder.
+incident demo without ROS 2. `apps/operator-ui` provides the first local
+operator console slice for the incident demo.
 
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
@@ -16,6 +17,10 @@ incident demo without ROS 2. `apps/operator-ui` is still a placeholder.
 - `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
   `edge.hello`, accepts `GO_TO_POSE` and `CANCEL_MISSION`, emits accepted acks,
   sends heartbeats, and can simulate stale telemetry or reconnect handshakes.
+- `apps/operator-ui`: lightweight TypeScript browser app served by a tiny local
+  Node server. It reads Fleet Platform REST state, subscribes to `/stream/events`,
+  creates `GO_TO_POSE` missions, cancels selected missions, and highlights
+  `ONLINE`, `STALE`, `DEGRADED`, `OFFLINE`, and `RECONNECTING` states.
 
 ## What Exists Today
 
@@ -29,6 +34,7 @@ flowchart LR
     Protocol["fleet-protocol<br/>contracts + schemas"]
     Api["fleet-platform<br/>HTTP/SSE/WebSocket<br/>in-memory state"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
+    UI["operator-ui<br/>local browser console"]
     Tests --> Domain
     Tests --> Protocol
     Domain --> Protocol
@@ -36,10 +42,10 @@ flowchart LR
     Api --> Protocol
     Simulator --> Protocol
     Simulator --> Api
+    UI --> Api
   end
 
   subgraph Placeholders["Scaffolded for later phases"]
-    UI["operator-ui"]
     Persistence["fleet-persistence"]
     Worker["event-worker"]
     Observability["observability"]
@@ -71,12 +77,13 @@ flowchart LR
   UI --> Protocol
 ```
 
-Phase 2 now has the in-memory platform and a local simulator. The platform
-exposes REST/SSE/WebSocket edges and keeps mission decisions inside
-`fleet-domain`. Queued commands are delivered after the edge sends `edge.hello`,
-which avoids double-delivery between socket upgrade and the first edge identity
-message. The simulator connects outbound to `/edge/connect?robotId=...` and
-uses the same protocol payloads future ROS 2 edge code must produce.
+Phase 2 now has the in-memory platform, a local simulator, and a local Operator
+UI. The platform exposes REST/SSE/WebSocket edges and keeps mission decisions
+inside `fleet-domain`. Queued commands are delivered after the edge sends
+`edge.hello`, which avoids double-delivery between socket upgrade and the first
+edge identity message. The simulator connects outbound to
+`/edge/connect?robotId=...` and uses the same protocol payloads future ROS 2
+edge code must produce.
 
 ## Mission Incident Flow
 
@@ -183,6 +190,14 @@ ROBOT_ID=robot-a \
 EDGE_AGENT_VERSION=sim-0.1.0 \
 SIM_SCENARIO=normal \
 pnpm --filter @roboops/cloud-edge-simulator dev
+```
+
+Run the Operator UI in a third terminal and open `http://127.0.0.1:4020`:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+OPERATOR_ROBOT_ID=robot-a \
+pnpm --filter @roboops/operator-ui dev
 ```
 
 `SIM_SCENARIO=normal` accepts a motion command and keeps telemetry fresh.
