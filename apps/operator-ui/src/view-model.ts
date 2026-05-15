@@ -36,6 +36,17 @@ export interface MissionCreationAvailability {
   readonly blockingMissionId?: string;
 }
 
+/** High-level mission buckets shown before raw lifecycle details. */
+export type MissionStateKind = "active" | "terminal" | "blocked" | "manual-review";
+
+/** Operator-facing classification for the selected mission detail panel. */
+export interface MissionStateSummary {
+  readonly kind: MissionStateKind;
+  readonly label: string;
+  readonly detail: string;
+  readonly tone: StatusTone;
+}
+
 /** Human wording for domain rejection codes that can surface in API responses. */
 const REJECTION_REASON_MESSAGES = {
   COMMAND_EXPIRED: "The command expired before it could be dispatched",
@@ -46,9 +57,22 @@ const REJECTION_REASON_MESSAGES = {
   IDEMPOTENCY_KEY_REUSE_CONFLICT:
     "The idempotency key was reused with different mission details",
   LOW_BATTERY: "The robot battery is below the safety threshold",
+  MISSION_NOT_ACTIVE: "The selected mission is no longer active",
+  UNKNOWN_MISSION: "Fleet Platform no longer has this mission",
   RECONCILIATION_IN_PROGRESS: "The robot is reconnecting and being reconciled",
   ROBOT_ALREADY_ASSIGNED: "The robot already has an active mission",
   ROBOT_TELEMETRY_STALE: "The robot telemetry is stale"
+} as const;
+
+/** Cancel-specific wording for rejection codes that need different operator action. */
+const CANCEL_REJECTION_REASON_MESSAGES = {
+  COMMAND_EXPIRED: "The cancel command expired before it could be dispatched",
+  COMMAND_TTL_INVALID: "The cancel command expiration is invalid",
+  DUPLICATE_COMMAND_ID: "A cancel command with this id already exists",
+  IDEMPOTENCY_KEY_REUSE_CONFLICT:
+    "The cancel request was retried with different mission details",
+  MISSION_NOT_ACTIVE: "The selected mission is no longer active",
+  UNKNOWN_MISSION: "Fleet Platform no longer has this mission"
 } as const;
 
 /** Maps robot connectivity into stable CSS/status tones. */
@@ -88,6 +112,62 @@ export function isActiveMissionState(state: MissionLifecycleState): boolean {
     "TIMED_OUT",
     "MANUAL_REVIEW"
   ].includes(state);
+}
+
+/** Groups lifecycle states into the buckets operators need for quick triage. */
+export function missionStateKind(state: MissionLifecycleState): MissionStateKind {
+  if (state === "SAFETY_BLOCKED") {
+    return "blocked";
+  }
+
+  if (state === "MANUAL_REVIEW") {
+    return "manual-review";
+  }
+
+  return isActiveMissionState(state) ? "active" : "terminal";
+}
+
+/** Summarizes selected mission state with a stable label, detail, and tone. */
+export function missionStateSummary(mission: MissionSnapshot): MissionStateSummary {
+  const kind = missionStateKind(mission.lifecycleState);
+  if (kind === "blocked") {
+    return {
+      kind,
+      label: "BLOCKED",
+      detail: "Blocked before dispatch by platform safety policy",
+      tone: "degraded"
+    };
+  }
+
+  if (kind === "manual-review") {
+    return {
+      kind,
+      label: "MANUAL REVIEW",
+      detail: "Needs operator review after reconnect reconciliation",
+      tone: "danger"
+    };
+  }
+
+  if (kind === "terminal") {
+    return {
+      kind,
+      label: "TERMINAL",
+      detail: terminalMissionDetail(mission.lifecycleState),
+      tone: terminalMissionTone(mission.lifecycleState)
+    };
+  }
+
+  return {
+    kind,
+    label: "ACTIVE",
+    detail: activeMissionDetail(mission.lifecycleState),
+    tone: activeMissionTone(mission.operationalStatus)
+  };
+}
+
+/** Chooses the visual tone for lifecycle and row status pills. */
+export function statusToneForMission(mission: MissionSnapshot): StatusTone {
+  return missionStateSummary(mission).tone;
 }
 
 /** Decides whether the operator can create another mission for the selected robot. */
@@ -140,6 +220,20 @@ export function formatCommandRejectionMessage(reason: string | undefined): strin
   }
 
   return `Mission request rejected: ${detail}.`;
+}
+
+/** Builds operator-facing feedback when Fleet Platform rejects cancellation. */
+export function formatCancelRejectionMessage(reason: string | undefined): string {
+  const detail = formatCancelRejectionReason(reason);
+  if (!detail) {
+    return "Cancel request was rejected by Fleet Platform.";
+  }
+
+  if (reason === "MISSION_NOT_ACTIVE") {
+    return `${detail}. Refreshing mission state may show the terminal outcome.`;
+  }
+
+  return `Cancel request rejected: ${detail}.`;
 }
 
 /** Explains terminal blocked/rejected mission rows when the backend provides a reason. */
@@ -345,6 +439,104 @@ function hasKnownRejectionReason(
   reason: string
 ): reason is keyof typeof REJECTION_REASON_MESSAGES {
   return Object.prototype.hasOwnProperty.call(REJECTION_REASON_MESSAGES, reason);
+}
+
+/** Converts cancel rejection codes into concise action-oriented wording. */
+function formatCancelRejectionReason(
+  reason: string | undefined
+): string | undefined {
+  if (!reason) {
+    return undefined;
+  }
+
+  if (hasKnownCancelRejectionReason(reason)) {
+    return CANCEL_REJECTION_REASON_MESSAGES[reason];
+  }
+
+  return formatRejectionReason(reason);
+}
+
+/** Narrows arbitrary strings to the cancel rejection codes with custom copy. */
+function hasKnownCancelRejectionReason(
+  reason: string
+): reason is keyof typeof CANCEL_REJECTION_REASON_MESSAGES {
+  return Object.prototype.hasOwnProperty.call(
+    CANCEL_REJECTION_REASON_MESSAGES,
+    reason
+  );
+}
+
+/** Explains active lifecycle states without exposing implementation jargon first. */
+function activeMissionDetail(state: MissionLifecycleState): string {
+  if (state === "CANCEL_REQUESTED") {
+    return "Cancel requested; waiting for edge acknowledgement";
+  }
+
+  if (state === "DISPATCHED") {
+    return "Command dispatched; waiting for edge acknowledgement";
+  }
+
+  if (state === "ACKNOWLEDGED") {
+    return "Command acknowledged; waiting for running telemetry";
+  }
+
+  return `Lifecycle ${state}`;
+}
+
+/** Maps active operational overlays into the tone palette used by the console. */
+function activeMissionTone(
+  operationalStatus: MissionSnapshot["operationalStatus"]
+): StatusTone {
+  if (
+    operationalStatus === "RECONNECTING" ||
+    operationalStatus === "RECONCILING"
+  ) {
+    return "reconnecting";
+  }
+
+  if (operationalStatus === "DEGRADED") {
+    return "degraded";
+  }
+
+  return "online";
+}
+
+/** Explains terminal lifecycle states with the operator action implied by each one. */
+function terminalMissionDetail(state: MissionLifecycleState): string {
+  if (state === "SUCCEEDED") {
+    return "Mission completed successfully";
+  }
+
+  if (state === "CANCELLED") {
+    return "Cancellation acknowledged by the edge";
+  }
+
+  if (state === "FAILED") {
+    return "Mission ended in failure";
+  }
+
+  if (state === "TIMED_OUT") {
+    return "Mission timed out before completion";
+  }
+
+  if (state === "REJECTED") {
+    return "Mission rejected before dispatch";
+  }
+
+  return `Lifecycle ${state}`;
+}
+
+/** Uses danger only for terminal states that need investigation. */
+function terminalMissionTone(state: MissionLifecycleState): StatusTone {
+  if (state === "FAILED" || state === "REJECTED") {
+    return "danger";
+  }
+
+  if (state === "SUCCEEDED") {
+    return "online";
+  }
+
+  return "offline";
 }
 
 /** Falls back to readable title case for new backend rejection codes. */

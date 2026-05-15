@@ -104,9 +104,11 @@ enabled, use **Reset State** to clear residual in-memory missions, or **Start
 Clean Mission** to reset and dispatch the normal demo `GO_TO_POSE` in one
 action. The UI disables mission creation while `robot-a` already has active
 work, and blocked/rejected mission rows show the platform reason when one is
-available. **Mark Stale** and **Reconnect** drive the protected demo fault
-endpoints when you want to demonstrate those paths without restarting every
-process.
+available. Selected mission details show the mission id, active, terminal,
+blocked, and manual-review grouping, command progress, and cancel rejection
+feedback without exposing raw HTTP text in normal operator flows. **Mark
+Stale** and **Reconnect** drive the protected demo fault endpoints when you
+want to demonstrate those paths without restarting every process.
 
 The protected demo endpoints are also available over HTTP when Fleet Platform
 is running with `DEMO_MODE=true`:

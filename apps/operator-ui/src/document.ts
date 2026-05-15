@@ -112,6 +112,17 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
             </div>
           </div>
           <dl class="detail-grid">
+            <div class="detail-wide">
+              <dt>Mission ID</dt>
+              <dd id="mission-id" class="detail-code">none</dd>
+            </div>
+            <div>
+              <dt>State</dt>
+              <dd>
+                <span id="mission-state" class="status-pill tone-neutral">none</span>
+                <small id="mission-state-detail">No mission selected</small>
+              </dd>
+            </div>
             <div>
               <dt>Lifecycle</dt>
               <dd><span id="mission-lifecycle" class="status-pill tone-neutral">none</span></dd>
@@ -122,13 +133,13 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
             </div>
             <div>
               <dt>Current command</dt>
-              <dd id="mission-command">none</dd>
+              <dd id="mission-command" class="detail-code">none</dd>
             </div>
             <div>
               <dt>Acked command</dt>
-              <dd id="mission-ack">none</dd>
+              <dd id="mission-ack" class="detail-code">none</dd>
             </div>
-            <div>
+            <div class="detail-wide">
               <dt>Reason</dt>
               <dd id="mission-reason">none</dd>
             </div>

@@ -1,16 +1,19 @@
 import { FleetPlatformApiClient } from "./api-client.js";
 import {
   formatBattery,
+  formatCancelRejectionMessage,
   formatCommandRejectionMessage,
   formatMissionFailureReason,
   formatRelativeTime,
   isActiveMissionState,
   missionCreationAvailability,
+  missionStateSummary,
   parsePoseNumber,
   selectDefaultMission,
   sortMissions,
   statusToneForConnection,
   statusToneForHealth,
+  statusToneForMission,
   summarizeStreamEvent,
   telemetryAgeMs,
   type EventSummary,
@@ -82,6 +85,9 @@ interface ViewRefs {
   readonly demoReconnectButton?: HTMLButtonElement;
   readonly actionMessage: HTMLElement;
   readonly missionList: HTMLElement;
+  readonly missionId: HTMLElement;
+  readonly missionState: HTMLElement;
+  readonly missionStateDetail: HTMLElement;
   readonly missionLifecycle: HTMLElement;
   readonly missionOperational: HTMLElement;
   readonly missionCommand: HTMLElement;
@@ -190,10 +196,13 @@ async function createMission(): Promise<void> {
     if (body.result.mission) {
       state.selectedMissionId = body.result.mission.missionId;
     }
-    state.actionMessage =
-      body.result.status === "ACCEPTED"
-        ? `Mission dispatched (${body.deliveryCount} edge delivery)`
-        : formatCommandRejectionMessage(body.result.reason);
+    if (body.result.status === "ACCEPTED") {
+      state.actionMessage = `Mission dispatched (${body.deliveryCount} edge delivery)`;
+    } else if (body.result.status === "IDEMPOTENT_REPLAY") {
+      state.actionMessage = "Mission request already dispatched";
+    } else {
+      state.actionMessage = formatCommandRejectionMessage(body.result.reason);
+    }
     state.actionMessageIsError = body.result.status === "REJECTED";
     await refreshSnapshot();
   } catch (error) {
@@ -222,10 +231,14 @@ async function cancelSelectedMission(): Promise<void> {
       mission.missionId,
       "operator requested cancel from UI"
     );
-    state.actionMessage =
-      body.result.status === "ACCEPTED"
-        ? `Cancel dispatched (${body.deliveryCount} edge delivery)`
-        : `Cancel ${body.result.status.toLowerCase()}`;
+    if (body.result.status === "ACCEPTED") {
+      state.actionMessage = `Cancel dispatched (${body.deliveryCount} edge delivery)`;
+    } else if (body.result.status === "IDEMPOTENT_REPLAY") {
+      state.actionMessage = "Cancel request already dispatched";
+    } else {
+      state.actionMessage = formatCancelRejectionMessage(body.result.reason);
+    }
+    state.actionMessageIsError = body.result.status === "REJECTED";
     await refreshSnapshot();
   } catch (error) {
     state.actionMessage = errorMessage(error);
@@ -273,10 +286,14 @@ async function startCleanDemoMission(): Promise<void> {
     if (body.result.mission) {
       state.selectedMissionId = body.result.mission.missionId;
     }
-    state.actionMessage =
-      body.result.status === "ACCEPTED"
-        ? `Demo mission dispatched (${body.deliveryCount} edge delivery)`
-        : `Demo mission ${body.result.status.toLowerCase()}`;
+    if (body.result.status === "ACCEPTED") {
+      state.actionMessage = `Demo mission dispatched (${body.deliveryCount} edge delivery)`;
+    } else if (body.result.status === "IDEMPOTENT_REPLAY") {
+      state.actionMessage = "Demo mission request already dispatched";
+    } else {
+      state.actionMessage = formatCommandRejectionMessage(body.result.reason);
+    }
+    state.actionMessageIsError = body.result.status === "REJECTED";
     await refreshSnapshot();
   } catch (error) {
     state.actionMessage = errorMessage(error);
@@ -439,7 +456,7 @@ function renderMissions(): void {
     }
 
     const status = document.createElement("span");
-    status.className = `status-pill tone-${missionTone(mission)}`;
+    status.className = `status-pill tone-${statusToneForMission(mission)}`;
     status.textContent = missionRowStatusLabel(mission);
     button.append(copy, status);
     return button;
@@ -452,6 +469,9 @@ function renderMissions(): void {
 function renderMissionDetails(): void {
   const mission = selectedMission();
   if (!mission) {
+    refs.missionId.textContent = "none";
+    setStatusPill(refs.missionState, "none", "neutral");
+    refs.missionStateDetail.textContent = "No mission selected";
     setStatusPill(refs.missionLifecycle, "none", "neutral");
     setStatusPill(refs.missionOperational, "none", "neutral");
     refs.missionCommand.textContent = "none";
@@ -460,7 +480,15 @@ function renderMissionDetails(): void {
     return;
   }
 
-  setStatusPill(refs.missionLifecycle, mission.lifecycleState, missionTone(mission));
+  const stateSummary = missionStateSummary(mission);
+  refs.missionId.textContent = mission.missionId;
+  setStatusPill(refs.missionState, stateSummary.label, stateSummary.tone);
+  refs.missionStateDetail.textContent = stateSummary.detail;
+  setStatusPill(
+    refs.missionLifecycle,
+    mission.lifecycleState,
+    statusToneForMission(mission)
+  );
   setStatusPill(
     refs.missionOperational,
     mission.operationalStatus,
@@ -571,34 +599,21 @@ function selectedMission(): MissionSnapshot | undefined {
   );
 }
 
-/** Chooses the visual tone for lifecycle and row status pills. */
-function missionTone(mission: MissionSnapshot): StatusTone {
-  if (mission.lifecycleState === "FAILED" || mission.lifecycleState === "REJECTED") {
-    return "danger";
-  }
-  if (mission.lifecycleState === "SAFETY_BLOCKED" || mission.operationalStatus === "DEGRADED") {
-    return "degraded";
-  }
-  if (
-    mission.operationalStatus === "RECONNECTING" ||
-    mission.operationalStatus === "RECONCILING"
-  ) {
-    return "reconnecting";
-  }
-  if (mission.lifecycleState === "CANCELLED" || mission.lifecycleState === "TIMED_OUT") {
-    return "offline";
-  }
-  return "online";
-}
-
-/** Shows terminal lifecycle states in mission rows when operational status is generic. */
+/** Shows mission state categories in rows when operational status is generic. */
 function missionRowStatusLabel(mission: MissionSnapshot): string {
-  if (mission.lifecycleState === "SAFETY_BLOCKED") {
+  const stateSummary = missionStateSummary(mission);
+  if (stateSummary.kind === "blocked") {
     return "BLOCKED";
   }
-  if (mission.lifecycleState === "REJECTED") {
-    return "REJECTED";
+
+  if (stateSummary.kind === "manual-review") {
+    return "REVIEW";
   }
+
+  if (stateSummary.kind === "terminal") {
+    return mission.lifecycleState;
+  }
+
   return mission.operationalStatus;
 }
 
@@ -702,6 +717,9 @@ function collectViewRefs(): ViewRefs {
     ...(demoReconnectButton ? { demoReconnectButton } : {}),
     actionMessage: requiredElement("action-message"),
     missionList: requiredElement("mission-list"),
+    missionId: requiredElement("mission-id"),
+    missionState: requiredElement("mission-state"),
+    missionStateDetail: requiredElement("mission-state-detail"),
     missionLifecycle: requiredElement("mission-lifecycle"),
     missionOperational: requiredElement("mission-operational"),
     missionCommand: requiredElement("mission-command"),

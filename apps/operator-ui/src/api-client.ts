@@ -76,6 +76,7 @@ export class FleetPlatformApiClient {
       `/missions/${encodeURIComponent(missionId)}/cancel`,
       {
         method: "POST",
+        acceptCommandRejection: true,
         body: { reason }
       }
     );

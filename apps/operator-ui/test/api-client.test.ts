@@ -32,6 +32,31 @@ describe("operator UI API client", () => {
     expect(result).toEqual(rejection);
   });
 
+  it("returns non-2xx cancel rejections so UI state can use the body", async () => {
+    const rejection = rejectedCancelResponse();
+    let requestUrl = "";
+    let requestBody: unknown;
+    const api = new FleetPlatformApiClient({
+      apiBaseUrl: "http://fleet.test",
+      fetchImpl: async (input, init) => {
+        requestUrl = String(input);
+        requestBody = JSON.parse(String(init?.body)) as unknown;
+        return jsonResponse(rejection, 422);
+      }
+    });
+
+    const result = await api.cancelMission(
+      "mission-old",
+      "operator requested cancel from UI"
+    );
+
+    expect(requestUrl).toBe("http://fleet.test/missions/mission-old/cancel");
+    expect(requestBody).toEqual({
+      reason: "operator requested cancel from UI"
+    });
+    expect(result).toEqual(rejection);
+  });
+
   it("throws concise structured errors for ordinary non-2xx API failures", async () => {
     const api = new FleetPlatformApiClient({
       apiBaseUrl: "http://fleet.test",
@@ -105,6 +130,26 @@ function rejectedMissionResponse(): MissionCommandResponse {
         createdAt: "2026-05-15T12:00:00.000Z",
         updatedAt: "2026-05-15T12:00:00.000Z",
         failureReason: "ROBOT_ALREADY_ASSIGNED"
+      }
+    },
+    deliveryCount: 0,
+    correlationId: "corr-test"
+  };
+}
+
+/** Builds a rejected cancel body returned when the selected mission is stale. */
+function rejectedCancelResponse(): MissionCommandResponse {
+  return {
+    result: {
+      status: "REJECTED",
+      reason: "MISSION_NOT_ACTIVE",
+      mission: {
+        missionId: "mission-old",
+        robotId: "robot-a",
+        lifecycleState: "CANCELLED",
+        operationalStatus: "NOMINAL",
+        createdAt: "2026-05-15T12:00:00.000Z",
+        updatedAt: "2026-05-15T12:01:00.000Z"
       }
     },
     deliveryCount: 0,

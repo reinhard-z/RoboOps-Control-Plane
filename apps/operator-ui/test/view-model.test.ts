@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import type { MissionSnapshot, RobotSnapshot } from "../src/types.js";
 import {
+  formatCancelRejectionMessage,
   formatCommandRejectionMessage,
   formatMissionFailureReason,
   formatRelativeTime,
   missionCreationAvailability,
+  missionStateKind,
+  missionStateSummary,
   parsePoseNumber,
   selectDefaultMission,
+  statusToneForMission,
   statusToneForConnection,
   summarizeStreamEvent,
   telemetryAgeMs
@@ -94,6 +98,51 @@ describe("operator UI view model", () => {
     expect(formatCommandRejectionMessage("LOW_BATTERY")).toBe(
       "Mission request rejected: The robot battery is below the safety threshold."
     );
+  });
+
+  it("converts cancel rejection reasons into operator-facing copy", () => {
+    expect(formatCancelRejectionMessage("MISSION_NOT_ACTIVE")).toBe(
+      "The selected mission is no longer active. Refreshing mission state may show the terminal outcome."
+    );
+    expect(formatCancelRejectionMessage("IDEMPOTENCY_KEY_REUSE_CONFLICT")).toBe(
+      "Cancel request rejected: The cancel request was retried with different mission details."
+    );
+  });
+
+  it("classifies selected mission states for detail views", () => {
+    const active = mission("mission-active", "2026-05-15T11:58:00.000Z", {
+      lifecycleState: "CANCEL_REQUESTED",
+      operationalStatus: "RECONNECTING"
+    });
+    const blocked = mission("mission-blocked", "2026-05-15T11:58:00.000Z", {
+      lifecycleState: "SAFETY_BLOCKED"
+    });
+    const review = mission("mission-review", "2026-05-15T11:58:00.000Z", {
+      lifecycleState: "MANUAL_REVIEW"
+    });
+    const terminal = mission("mission-cancelled", "2026-05-15T11:58:00.000Z", {
+      lifecycleState: "CANCELLED"
+    });
+
+    expect(missionStateKind(active.lifecycleState)).toBe("active");
+    expect(missionStateSummary(active)).toMatchObject({
+      label: "ACTIVE",
+      detail: "Cancel requested; waiting for edge acknowledgement",
+      tone: "reconnecting"
+    });
+    expect(missionStateSummary(blocked)).toMatchObject({
+      kind: "blocked",
+      label: "BLOCKED"
+    });
+    expect(missionStateSummary(review)).toMatchObject({
+      kind: "manual-review",
+      label: "MANUAL REVIEW"
+    });
+    expect(missionStateSummary(terminal)).toMatchObject({
+      kind: "terminal",
+      label: "TERMINAL"
+    });
+    expect(statusToneForMission(terminal)).toBe("offline");
   });
 
   it("explains blocked and rejected mission reasons when rows expose them", () => {

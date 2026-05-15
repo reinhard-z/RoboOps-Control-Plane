@@ -194,6 +194,10 @@ button:hover:not(:disabled) {
   min-width: 0;
 }
 
+.detail-wide {
+  grid-column: 1 / -1;
+}
+
 dt {
   margin-bottom: 4px;
   color: var(--muted);
@@ -208,6 +212,14 @@ dd {
   font-size: 16px;
   font-weight: 700;
   overflow-wrap: anywhere;
+}
+
+.detail-code {
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 dd small {

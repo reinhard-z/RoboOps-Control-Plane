@@ -23,7 +23,9 @@ operator console slice for the incident demo.
   `ONLINE`, `STALE`, `DEGRADED`, `OFFLINE`, and `RECONNECTING` states. Local
   demo controls are rendered only when explicitly configured with demo mode and
   a demo admin token. Mission creation is disabled while the robot already has
-  active work, and blocked/rejected mission rows surface the platform reason.
+  active work. Mission rows and selected mission details surface platform
+  reasons, preserve structured cancel rejections, and separate active,
+  terminal, blocked, and manual-review states.
 
 ## What Exists Today
 
