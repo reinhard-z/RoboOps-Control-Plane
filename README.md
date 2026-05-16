@@ -29,6 +29,77 @@ pnpm build
 The repo targets Node 22 or newer. The simulator uses the runtime WebSocket
 client that ships with modern Node.
 
+## Container Images
+
+The repository has one shared Dockerfile for the runnable apps. Image builds
+use Node 22, enable pnpm through Corepack, install from `pnpm-lock.yaml` with
+`--frozen-lockfile`, build the selected app plus its workspace dependencies,
+and copy a production deploy bundle into a non-root runtime image.
+
+Build images from the repo root:
+
+```sh
+docker build -f infra/container-images/Dockerfile \
+  --build-arg APP_PACKAGE=@roboops/fleet-platform \
+  -t roboops/fleet-platform:local .
+
+docker build -f infra/container-images/Dockerfile \
+  --build-arg APP_PACKAGE=@roboops/operator-ui \
+  -t roboops/operator-ui:local .
+
+docker build -f infra/container-images/Dockerfile \
+  --build-arg APP_PACKAGE=@roboops/cloud-edge-simulator \
+  -t roboops/cloud-edge-simulator:local .
+
+docker build -f infra/container-images/Dockerfile \
+  --build-arg APP_PACKAGE=@roboops/event-worker \
+  -t roboops/event-worker:local .
+```
+
+Run the in-memory Fleet Platform and Operator UI without Postgres:
+
+```sh
+docker run --rm -p 4010:4010 roboops/fleet-platform:local
+
+docker run --rm -p 4020:4020 \
+  -e FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+  -e OPERATOR_ROBOT_ID=robot-a \
+  roboops/operator-ui:local
+```
+
+Run the simulator against the Fleet Platform container:
+
+```sh
+docker run --rm \
+  -e FLEET_PLATFORM_URL=http://host.docker.internal:4010 \
+  -e ROBOT_ID=robot-a \
+  -e SIM_SCENARIO=normal \
+  roboops/cloud-edge-simulator:local
+```
+
+Postgres remains opt-in at runtime. Pass connection strings as environment
+variables or CLI flags, never at image build time:
+
+```sh
+docker run --rm -p 4010:4010 \
+  -e FLEET_PERSISTENCE_MODE=postgres \
+  -e FLEET_PERSISTENCE_DATABASE_URL=postgres://user:password@host:5432/db \
+  roboops/fleet-platform:local
+
+docker run --rm roboops/event-worker:local
+
+docker run --rm \
+  -e FLEET_PERSISTENCE_DATABASE_URL=postgres://user:password@host:5432/db \
+  roboops/event-worker:local --publish-noop
+```
+
+The Event Worker image prints usage by default so container startup does not
+require a database. Supplying `FLEET_PERSISTENCE_DATABASE_URL`,
+`DATABASE_URL`, or `--database-url` opts into the existing Postgres-backed
+worker behavior. On Linux, add
+`--add-host=host.docker.internal:host-gateway` when using the
+`host.docker.internal` examples.
+
 ## Local Incident Demo
 
 Run the full local stack from the repo root:
