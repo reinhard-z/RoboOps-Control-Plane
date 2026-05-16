@@ -1,0 +1,223 @@
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+
+namespace roboops::edge_agent {
+
+/** Protocol schema strings mirrored from packages/fleet-protocol/src/types.ts. */
+struct ProtocolSchemaVersions {
+  static constexpr std::string_view command_envelope = "command.envelope.v1";
+  static constexpr std::string_view command_ack = "command.ack.v1";
+  static constexpr std::string_view robot_telemetry = "robot.telemetry.v1";
+  static constexpr std::string_view reconnect_handshake =
+      "reconnect.handshake.v1";
+};
+
+/** Minimal 2D pose value used by the current Fleet Platform protocol. */
+struct Pose2D {
+  double x = 0.0;
+  double y = 0.0;
+  double theta = 0.0;
+};
+
+/** Command types currently accepted by the shared TypeScript protocol package. */
+enum class CommandType {
+  go_to_pose,
+  cancel_mission,
+  pause_mission,
+  resume_mission,
+  emergency_stop
+};
+
+/** Command safety classes sent by Fleet Platform. */
+enum class SafetyClass {
+  normal,
+  risky,
+  emergency_stop
+};
+
+/** Edge acknowledgement outcomes defined by command.ack.v1. */
+enum class CommandAckStatus {
+  accepted,
+  rejected,
+  expired,
+  duplicate,
+  failed
+};
+
+/** Robot health values reported by robot.telemetry.v1. */
+enum class RobotHealthState {
+  ok,
+  warn,
+  error,
+  estop
+};
+
+/** Connectivity values reported by robot.telemetry.v1. */
+enum class RobotConnectionState {
+  online,
+  stale,
+  degraded,
+  offline,
+  reconnecting
+};
+
+/** Mission state values the edge can report during reconnect reconciliation. */
+enum class MissionLifecycleState {
+  created,
+  validated,
+  rejected,
+  safety_blocked,
+  assigned,
+  dispatched,
+  acknowledged,
+  running,
+  cancel_requested,
+  cancelled,
+  succeeded,
+  failed,
+  timed_out,
+  manual_review
+};
+
+/** Typed view of the platform.command payload the future transport will parse. */
+struct CommandEnvelopeV1 {
+  std::string command_id;
+  std::string mission_id;
+  std::string robot_id;
+  CommandType type = CommandType::go_to_pose;
+  std::string idempotency_key;
+  std::int64_t sequence = 0;
+  std::string issued_at;
+  std::string expires_at;
+  bool requires_ack = true;
+  SafetyClass safety_class = SafetyClass::normal;
+  std::string correlation_id;
+  std::string causation_id;
+  std::optional<Pose2D> target;
+  std::optional<std::string> reason;
+};
+
+/** Local session state shared across hello, telemetry, and reconnect messages. */
+struct EdgeSessionState {
+  std::string robot_id;
+  std::string edge_session_id;
+  std::string edge_agent_version;
+  std::int64_t last_seen_command_sequence = 0;
+  std::optional<std::string> last_acknowledged_command_id;
+  std::optional<std::string> current_mission_id;
+  std::optional<MissionLifecycleState> reported_mission_lifecycle_state;
+  std::string last_telemetry_observed_at;
+};
+
+/** command.ack.v1 payload returned after the edge accepts or rejects a command. */
+struct CommandAckV1 {
+  std::string ack_id;
+  std::string command_id;
+  std::optional<std::string> mission_id;
+  std::string robot_id;
+  CommandAckStatus status = CommandAckStatus::accepted;
+  std::string received_at;
+  std::int64_t last_seen_command_sequence = 0;
+  std::optional<std::string> reason;
+  std::string correlation_id;
+  std::string causation_id;
+};
+
+/** robot.telemetry.v1 payload sent from the robot-near agent to Fleet Platform. */
+struct RobotTelemetryEventV1 {
+  std::string event_id;
+  std::string robot_id;
+  std::string observed_at;
+  std::string received_at;
+  Pose2D pose;
+  double battery_percent = 100.0;
+  RobotHealthState health = RobotHealthState::ok;
+  RobotConnectionState connection_state = RobotConnectionState::online;
+  std::optional<std::string> current_mission_id;
+  std::optional<std::string> last_acknowledged_command_id;
+  std::int64_t last_seen_command_sequence = 0;
+  std::string edge_agent_version;
+};
+
+/** reconnect.handshake.v1 payload used to reconcile after an edge reconnect. */
+struct ReconnectHandshakeV1 {
+  std::string robot_id;
+  std::string edge_session_id;
+  std::string connected_at;
+  std::int64_t last_seen_command_sequence = 0;
+  std::optional<std::string> last_acknowledged_command_id;
+  std::optional<std::string> reported_mission_id;
+  std::optional<MissionLifecycleState> reported_mission_lifecycle_state;
+  std::string last_telemetry_observed_at;
+  std::string edge_agent_version;
+};
+
+/** Wire wrapper used by the Fleet Platform edge WebSocket gateway. */
+struct EdgeWireMessage {
+  std::string type;
+  std::string payload_json;
+};
+
+[[nodiscard]] std::string to_wire_value(CommandType value);
+[[nodiscard]] std::string to_wire_value(SafetyClass value);
+[[nodiscard]] std::string to_wire_value(CommandAckStatus value);
+[[nodiscard]] std::string to_wire_value(RobotHealthState value);
+[[nodiscard]] std::string to_wire_value(RobotConnectionState value);
+[[nodiscard]] std::string to_wire_value(MissionLifecycleState value);
+
+/** Creates a sortable-enough local id for protocol records generated by the skeleton. */
+[[nodiscard]] std::string make_local_id(std::string_view prefix);
+
+/** Formats the current wall-clock time as an ISO-8601 UTC timestamp. */
+[[nodiscard]] std::string now_iso_utc();
+
+/** Builds the edge.hello message sent immediately after the outbound socket opens. */
+[[nodiscard]] EdgeWireMessage make_hello_message(const EdgeSessionState& state);
+
+/** Builds an acknowledgement from a command envelope without changing the cloud contract. */
+[[nodiscard]] CommandAckV1 make_command_ack(
+    const CommandEnvelopeV1& command,
+    CommandAckStatus status,
+    std::string_view received_at,
+    std::optional<std::string> reason = std::nullopt);
+
+/** Builds a minimal telemetry payload for heartbeat-style edge reporting. */
+[[nodiscard]] RobotTelemetryEventV1 make_telemetry_event(
+    const EdgeSessionState& state,
+    const Pose2D& pose,
+    double battery_percent,
+    RobotHealthState health,
+    RobotConnectionState connection_state,
+    std::string_view observed_at,
+    std::string_view received_at);
+
+/** Builds the reconnect handshake sent after the outbound connection is restored. */
+[[nodiscard]] ReconnectHandshakeV1 make_reconnect_handshake(
+    const EdgeSessionState& state,
+    std::string_view connected_at,
+    std::string_view last_telemetry_observed_at);
+
+[[nodiscard]] std::string to_json(const CommandAckV1& message);
+[[nodiscard]] std::string to_json(const RobotTelemetryEventV1& message);
+[[nodiscard]] std::string to_json(const ReconnectHandshakeV1& message);
+
+/** Serializes a complete edge wire message as the Fleet Platform gateway expects it. */
+[[nodiscard]] std::string to_json(const EdgeWireMessage& message);
+
+/** Wraps a command ack payload in the edge.command_ack wire envelope. */
+[[nodiscard]] EdgeWireMessage make_command_ack_wire_message(
+    const CommandAckV1& message);
+
+/** Wraps a telemetry payload in the edge.telemetry wire envelope. */
+[[nodiscard]] EdgeWireMessage make_telemetry_wire_message(
+    const RobotTelemetryEventV1& message);
+
+/** Wraps a reconnect payload in the edge.reconnect_handshake wire envelope. */
+[[nodiscard]] EdgeWireMessage make_reconnect_handshake_wire_message(
+    const ReconnectHandshakeV1& message);
+
+}  // namespace roboops::edge_agent

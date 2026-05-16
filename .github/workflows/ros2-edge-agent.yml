@@ -1,0 +1,27 @@
+name: ROS2 Edge Agent
+
+on:
+  push:
+    paths:
+      - ".github/workflows/ros2-edge-agent.yml"
+      - "edge/ros2-edge-agent-cpp/**"
+  pull_request:
+    paths:
+      - ".github/workflows/ros2-edge-agent.yml"
+      - "edge/ros2-edge-agent-cpp/**"
+
+permissions:
+  contents: read
+
+jobs:
+  jazzy-build-and-test:
+    name: Jazzy Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and test in ROS2 Jazzy container
+        shell: bash
+        run: sh edge/ros2-edge-agent-cpp/scripts/run-ros2-jazzy-container-check.sh

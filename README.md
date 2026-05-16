@@ -262,6 +262,29 @@ with `SIM_SCENARIO=reconnect` and start a clean mission. The simulator accepts
 the motion command, disconnects, reconnects with a reconnect handshake, and then
 resumes telemetry.
 
+## ROS2 Edge Agent Skeleton
+
+`edge/ros2-edge-agent-cpp` contains the ROS2 Jazzy C++ package scaffold for the
+robot-near edge agent. It mirrors the existing Fleet Platform edge wire shapes,
+loads `FLEET_PLATFORM_URL`, `ROBOT_ID`, and `EDGE_AGENT_VERSION`, derives the
+same outbound `/edge/connect?robotId=...` WebSocket URL as the simulator, and
+logs the intended connection behavior.
+
+This skeleton does not implement a WebSocket client, ROS2 topic/action
+adapters, navigation, SLAM, Gazebo, or any cloud-to-ROS2/DDS bridge. Build and
+run notes are in `edge/ros2-edge-agent-cpp/README.md`. Without installing ROS2
+on the host, run the Jazzy container check:
+
+```sh
+sh edge/ros2-edge-agent-cpp/scripts/run-ros2-jazzy-container-check.sh
+```
+
+For a faster non-ROS compiler smoke check:
+
+```sh
+sh edge/ros2-edge-agent-cpp/scripts/run-static-smoke.sh
+```
+
 ## Evidence Capture Demo Script
 
 Use these commands when recording public-demo clips from a clean local run.
