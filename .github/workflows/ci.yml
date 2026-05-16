@@ -6,8 +6,8 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    name: Checks
+  test-and-build:
+    name: Test and Build
     runs-on: ubuntu-latest
 
     env:
@@ -16,10 +16,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
@@ -38,3 +38,33 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  container-images:
+    name: Container Images (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    needs: test-and-build
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app_package: "@roboops/fleet-platform"
+            image: "fleet-platform"
+          - app_package: "@roboops/operator-ui"
+            image: "operator-ui"
+          - app_package: "@roboops/cloud-edge-simulator"
+            image: "cloud-edge-simulator"
+          - app_package: "@roboops/event-worker"
+            image: "event-worker"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build image
+        run: |
+          docker build \
+            -f infra/container-images/Dockerfile \
+            --build-arg APP_PACKAGE=${{ matrix.app_package }} \
+            -t roboops/${{ matrix.image }}:ci \
+            .
