@@ -170,6 +170,9 @@ On Linux, add `--add-host=host.docker.internal:host-gateway` when using the
 - [Current architecture](docs/architecture/current-architecture.md) explains
   the API, domain, simulator, UI, persistence, observability, and deployment
   boundaries.
+- [AWS/Kubernetes demo runbook](docs/aws-kubernetes-demo-runbook.md) explains
+  how to capture short-lived hosted demo evidence without expanding the project
+  into a production hosting guide.
 - [Robot software rollout](docs/robot-software-rollout.md) explains the
   GitOps boundary: ArgoCD rolls out image/config versions, while Fleet Platform
   remains responsible for missions.

@@ -159,6 +159,9 @@ For local recordings, keep `CORS_ALLOW_ORIGIN=http://127.0.0.1:4020`. A hosted
 recording environment should use a high-entropy demo token, exact CORS origin,
 provider-level access controls, and no real robot credentials.
 
+For a short-lived AWS/Kubernetes recording, use the focused evidence checklist
+in the [AWS/Kubernetes demo runbook](aws-kubernetes-demo-runbook.md).
+
 ```sh
 # Fleet Platform
 HOST=0.0.0.0
