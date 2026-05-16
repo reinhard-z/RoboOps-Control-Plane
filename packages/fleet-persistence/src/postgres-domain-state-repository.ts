@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import pg from "pg";
 import type { Pool, PoolClient, PoolConfig, QueryResultRow } from "pg";
 
@@ -33,11 +35,45 @@ const tableNames = {
   domainEvents: `${fleetPersistenceSchema}.domain_events`,
   idempotencyKeys: `${fleetPersistenceSchema}.idempotency_keys`,
   missions: `${fleetPersistenceSchema}.missions`,
+  outboxEvents: `${fleetPersistenceSchema}.outbox_events`,
   robotSessions: `${fleetPersistenceSchema}.robot_sessions`,
   robotTelemetryEvents: `${fleetPersistenceSchema}.robot_telemetry_events`,
   robots: `${fleetPersistenceSchema}.robots`,
   stateBookmarks: `${fleetPersistenceSchema}.domain_state_bookmarks`
 } as const;
+
+/** Internal row shape queued for later at-least-once publication workers. */
+interface OutboxRecord {
+  readonly aggregateType: string;
+  readonly aggregateId: string;
+  readonly eventType: string;
+  readonly payload: EventEnvelopeV1 | AuditEventV1;
+  readonly correlationId: string;
+  readonly causationId?: string;
+  readonly dedupeKey: string;
+}
+
+/** SQL for inserting one transactional outbox row with idempotent dedupe handling. */
+const insertOutboxRecordSql = `
+INSERT INTO ${tableNames.outboxEvents} (
+  aggregate_type,
+  aggregate_id,
+  event_type,
+  payload_json,
+  correlation_id,
+  causation_id,
+  dedupe_key
+) VALUES (
+  $1,
+  $2,
+  $3,
+  $4::jsonb,
+  $5,
+  $6,
+  $7
+)
+ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+`;
 
 /** Connection options for the Postgres-backed whole-state repository adapter. */
 export interface PostgresDomainStateRepositoryOptions {
@@ -82,12 +118,17 @@ export class PostgresDomainStateRepository implements DomainStateRepository {
   async write(state: DomainState): Promise<void> {
     await this.withTransaction(async (client) => {
       await lockRepository(client);
-      await replaceDomainState(client, state);
+      const currentState = await readDomainState(client);
+      const outboxRecords = selectNewOutboxRecords(currentState, state);
+      await replaceDomainState(client, state, outboxRecords);
     });
   }
 
   async reset(state: DomainState): Promise<void> {
-    await this.write(state);
+    await this.withTransaction(async (client) => {
+      await lockRepository(client);
+      await replaceDomainState(client, state);
+    });
   }
 
   async update<TResult>(mutator: DomainStateMutator<TResult>): Promise<TResult> {
@@ -95,7 +136,8 @@ export class PostgresDomainStateRepository implements DomainStateRepository {
       await lockRepository(client);
       const currentState = await readDomainState(client);
       const mutation = mutator(currentState);
-      await replaceDomainState(client, mutation.state);
+      const outboxRecords = selectNewOutboxRecords(currentState, mutation.state);
+      await replaceDomainState(client, mutation.state, outboxRecords);
       return mutation.result;
     });
   }
@@ -156,7 +198,8 @@ async function readDomainState(client: PoolClient): Promise<DomainState> {
 /** Replaces the current repository view while preserving schema-level integrity checks. */
 async function replaceDomainState(
   client: PoolClient,
-  state: DomainState
+  state: DomainState,
+  outboxRecords: readonly OutboxRecord[] = []
 ): Promise<void> {
   await clearDomainState(client);
   await insertRobots(client, Object.values(state.robots));
@@ -164,9 +207,97 @@ async function replaceDomainState(
   await insertCommands(client, Object.values(state.commands));
   await insertDomainEvents(client, state.domainEvents);
   await insertAuditEvents(client, state.auditEvents);
+  await insertOutboxRecords(client, outboxRecords);
   await insertIdempotencyRecords(client, Object.values(state.idempotencyRecords));
   await resolvePreservedFactLogReferences(client);
   await writeStateBookmarks(client, state);
+}
+
+/** Infers new reducer records from whole-state replacement using stable envelope identity. */
+function selectNewOutboxRecords(
+  currentState: DomainState,
+  nextState: DomainState
+): readonly OutboxRecord[] {
+  const persistedKeys = new Set([
+    ...currentState.domainEvents.map(domainEventDedupeKey),
+    ...currentState.auditEvents.map(auditEventDedupeKey)
+  ]);
+  const records: OutboxRecord[] = [];
+
+  for (const event of nextState.domainEvents) {
+    const dedupeKey = domainEventDedupeKey(event);
+    if (!persistedKeys.has(dedupeKey)) {
+      records.push(domainEventOutboxRecord(event, dedupeKey));
+    }
+  }
+
+  for (const event of nextState.auditEvents) {
+    const dedupeKey = auditEventDedupeKey(event);
+    if (!persistedKeys.has(dedupeKey)) {
+      records.push(auditEventOutboxRecord(event, dedupeKey));
+    }
+  }
+
+  return records;
+}
+
+/** Converts a domain event envelope into the generic outbox queue row shape. */
+function domainEventOutboxRecord(
+  event: EventEnvelopeV1,
+  dedupeKey: string
+): OutboxRecord {
+  return {
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    eventType: event.eventType,
+    payload: event,
+    correlationId: event.correlationId,
+    ...(event.causationId !== undefined ? { causationId: event.causationId } : {}),
+    dedupeKey
+  };
+}
+
+/** Converts an audit event into an outbox row while preserving its full envelope. */
+function auditEventOutboxRecord(
+  event: AuditEventV1,
+  dedupeKey: string
+): OutboxRecord {
+  const aggregate = auditEventAggregate(event);
+  return {
+    aggregateType: aggregate.type,
+    aggregateId: aggregate.id,
+    eventType: event.action,
+    payload: event,
+    correlationId: event.correlationId,
+    ...(event.causationId !== undefined ? { causationId: event.causationId } : {}),
+    dedupeKey
+  };
+}
+
+/** Chooses the most specific aggregate hint available on an audit event. */
+function auditEventAggregate(
+  event: AuditEventV1
+): { readonly type: string; readonly id: string } {
+  if (event.missionId) {
+    return { type: "mission", id: event.missionId };
+  }
+  if (event.robotId) {
+    return { type: "robot", id: event.robotId };
+  }
+  if (event.commandId) {
+    return { type: "command", id: event.commandId };
+  }
+  return { type: "system", id: event.auditEventId };
+}
+
+/** Names the durable identity used by the outbox uniqueness guard for domain events. */
+function domainEventDedupeKey(event: EventEnvelopeV1): string {
+  return `domain:${event.eventId}:${stableValueSha256(event)}`;
+}
+
+/** Names the durable identity used by the outbox uniqueness guard for audit events. */
+function auditEventDedupeKey(event: AuditEventV1): string {
+  return `audit:${event.auditEventId}:${stableValueSha256(event)}`;
 }
 
 /** Clears state-owned tables while preserving append-only edge fact logs. */
@@ -439,6 +570,29 @@ async function insertAuditEvents(
       ]
     );
   }
+}
+
+/** Queues new reducer records for future publication without publishing externally. */
+async function insertOutboxRecords(
+  client: PoolClient,
+  records: readonly OutboxRecord[]
+): Promise<void> {
+  for (const record of records) {
+    await client.query(insertOutboxRecordSql, outboxRecordParameters(record));
+  }
+}
+
+/** Maps an outbox record to query parameters in SQL placeholder order. */
+function outboxRecordParameters(record: OutboxRecord): unknown[] {
+  return [
+    record.aggregateType,
+    record.aggregateId,
+    record.eventType,
+    jsonb(record.payload),
+    record.correlationId,
+    record.causationId ?? null,
+    record.dedupeKey
+  ];
 }
 
 /** Inserts idempotency records after their command and mission references exist. */
@@ -841,6 +995,54 @@ function stringPayloadField(
 /** Serializes a value for jsonb parameters while keeping SQL text parameterized. */
 function jsonb(value: unknown): string {
   return JSON.stringify(value);
+}
+
+/** Hashes JSON-compatible values after sorting object keys for process-stable identity. */
+function stableValueSha256(value: unknown): string {
+  return createHash("sha256").update(stableJsonStringify(value)).digest("hex");
+}
+
+/** Canonical JSON tree used to hash event envelopes without key-order drift. */
+type StableJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly StableJsonValue[]
+  | { readonly [key: string]: StableJsonValue };
+
+/** Serializes JSON-like values deterministically so jsonb key order cannot affect dedupe. */
+function stableJsonStringify(value: unknown): string {
+  return JSON.stringify(toStableJsonValue(value));
+}
+
+/** Converts protocol envelopes into a canonical JSON-compatible value tree. */
+function toStableJsonValue(value: unknown): StableJsonValue {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    typeof value === "string"
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(toStableJsonValue);
+  }
+
+  if (typeof value === "object") {
+    const stableObject: Record<string, StableJsonValue> = {};
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    for (const [key, entryValue] of entries) {
+      stableObject[key] = toStableJsonValue(entryValue);
+    }
+    return stableObject;
+  }
+
+  throw new Error(`Cannot create stable JSON for ${typeof value} value`);
 }
 
 /** Converts Postgres timestamps to the ISO string shape used by protocol contracts. */

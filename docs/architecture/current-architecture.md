@@ -11,8 +11,9 @@ operator console slice for the incident demo.
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
 - `packages/fleet-persistence`: repository contract, in-memory `DomainState`
-  implementation used by default, Postgres migrations, and an opt-in Postgres
-  repository adapter for durable runtime state.
+  implementation used by default, Postgres migrations, an opt-in Postgres
+  repository adapter for durable runtime state, and a transactional outbox
+  enqueue path for reducer-produced domain and audit records.
 - `packages/test-support`: fake clock/test helpers.
 - Domain tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: HTTP API, SSE stream, edge WebSocket gateway, queued
@@ -180,6 +181,9 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 - Keep `DomainState` behind the `fleet-persistence` repository contract and
   Fleet Platform service functions. Fleet Platform defaults to the in-memory
   adapter; Postgres is selected only with explicit runtime configuration.
+- Keep the Postgres outbox write path internal to persistence for now. It
+  enqueues reducer-produced domain and audit records in the same transaction as
+  state replacement, but no worker or external publisher runs yet.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
 - Publish reducer-produced `domainEvents` and `auditEvents` to API responses/SSE.

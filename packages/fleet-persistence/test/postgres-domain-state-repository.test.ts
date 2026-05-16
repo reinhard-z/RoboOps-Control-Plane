@@ -2,7 +2,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 
-import { createInitialDomainState } from "@roboops/fleet-domain";
+import { createInitialDomainState, type DomainState } from "@roboops/fleet-domain";
 
 import {
   PostgresDomainStateRepository,
@@ -59,6 +59,71 @@ describe.skipIf(!shouldRunPostgresTests || !testDatabaseUrl)(
       await repository.write(replacementState);
       await repository.write(replacementState);
       expect(await repository.read()).toEqual(replacementState);
+    });
+
+    it("enqueues newly persisted domain and audit records once", async () => {
+      if (!pool) {
+        throw new Error("Postgres test pool was not initialized");
+      }
+      const repository = await createRepository();
+      const state = populatedDomainState("outbox-once");
+      await deleteOutboxRowsForStates(pool, [state]);
+
+      await repository.write(state);
+      await repository.write(state);
+
+      const rows = await readOutboxRowsForStates(pool, [state]);
+      expect(rows).toHaveLength(2);
+      expect(rows.map(outboxPayloadIdentity).sort()).toEqual([
+        "audit:audit-outbox-once",
+        "domain:evt-domain-outbox-once"
+      ]);
+      expect(new Set(rows.map((row) => row.dedupe_key)).size).toBe(2);
+
+      await repository.reset(createInitialDomainState());
+      await repository.write(state);
+
+      expect(await readOutboxRowsForStates(pool, [state])).toHaveLength(2);
+    });
+
+    it("does not duplicate outbox rows for historical records during replacement", async () => {
+      if (!pool) {
+        throw new Error("Postgres test pool was not initialized");
+      }
+      const repository = await createRepository();
+      const historicalState = populatedDomainState("outbox-history");
+      const appendedRecordState = populatedDomainState("outbox-history-new");
+      const replacementState = appendEventHistory(
+        historicalState,
+        appendedRecordState
+      );
+      await deleteOutboxRowsForStates(pool, [historicalState, appendedRecordState]);
+
+      await repository.write(historicalState);
+      expect(await readOutboxRowsForStates(pool, [historicalState])).toHaveLength(2);
+
+      await repository.write(replacementState);
+      await repository.write(replacementState);
+
+      expect(
+        await readOutboxRowsForStates(pool, [
+          historicalState,
+          appendedRecordState
+        ])
+      ).toHaveLength(4);
+    });
+
+    it("resets without reading the current aggregate first", async () => {
+      if (!pool) {
+        throw new Error("Postgres test pool was not initialized");
+      }
+      const repository = await createRepository(populatedDomainState("broken-reset"));
+
+      await breakDomainEventBookmarkReference(pool);
+
+      await repository.reset(createInitialDomainState());
+
+      expect(await repository.read()).toEqual(createInitialDomainState());
     });
 
     it("preserves append-only edge fact logs when replacing state", async () => {
@@ -124,6 +189,107 @@ describe.skipIf(!shouldRunPostgresTests || !testDatabaseUrl)(
     });
   }
 );
+
+/** Outbox row projection used by tests to assert queue identity without UUIDs. */
+interface OutboxEventTestRow {
+  readonly aggregate_type: string;
+  readonly aggregate_id: string;
+  readonly event_type: string;
+  readonly correlation_id: string;
+  readonly causation_id: string | null;
+  readonly dedupe_key: string;
+  readonly payload_json: Record<string, unknown>;
+}
+
+/** Appends only immutable event history so tests exercise replacement diffing. */
+function appendEventHistory(
+  state: DomainState,
+  source: DomainState
+): DomainState {
+  return {
+    ...state,
+    domainEvents: [...state.domainEvents, ...source.domainEvents],
+    auditEvents: [...state.auditEvents, ...source.auditEvents]
+  };
+}
+
+/** Removes fixture outbox rows so opt-in tests can be rerun against one database. */
+async function deleteOutboxRowsForStates(
+  pool: Pool,
+  states: readonly DomainState[]
+): Promise<void> {
+  const identifiers = outboxIdentifiersForStates(states);
+  await pool.query(
+    [
+      "DELETE FROM fleet_persistence.outbox_events",
+      "WHERE payload_json->>'eventId' = ANY($1::text[])",
+      "   OR payload_json->>'auditEventId' = ANY($2::text[])"
+    ].join("\n"),
+    [identifiers.domainEventIds, identifiers.auditEventIds]
+  );
+}
+
+/** Reads queued fixture rows by payload identity instead of generated UUID. */
+async function readOutboxRowsForStates(
+  pool: Pool,
+  states: readonly DomainState[]
+): Promise<readonly OutboxEventTestRow[]> {
+  const identifiers = outboxIdentifiersForStates(states);
+  const result = await pool.query<OutboxEventTestRow>(
+    [
+      "SELECT aggregate_type, aggregate_id, event_type, correlation_id,",
+      "  causation_id, dedupe_key, payload_json",
+      "FROM fleet_persistence.outbox_events",
+      "WHERE payload_json->>'eventId' = ANY($1::text[])",
+      "   OR payload_json->>'auditEventId' = ANY($2::text[])",
+      "ORDER BY dedupe_key"
+    ].join("\n"),
+    [identifiers.domainEventIds, identifiers.auditEventIds]
+  );
+  return result.rows;
+}
+
+/** Collects domain and audit event ids from complete test states. */
+function outboxIdentifiersForStates(states: readonly DomainState[]): {
+  readonly domainEventIds: readonly string[];
+  readonly auditEventIds: readonly string[];
+} {
+  return {
+    domainEventIds: states.flatMap((state) =>
+      state.domainEvents.map((event) => event.eventId)
+    ),
+    auditEventIds: states.flatMap((state) =>
+      state.auditEvents.map((event) => event.auditEventId)
+    )
+  };
+}
+
+/** Formats the queued payload identity in the same terms the outbox dedupes. */
+function outboxPayloadIdentity(row: OutboxEventTestRow): string {
+  const domainEventId = stringJsonField(row.payload_json, "eventId");
+  if (domainEventId) {
+    return `domain:${domainEventId}`;
+  }
+  const auditEventId = stringJsonField(row.payload_json, "auditEventId");
+  if (auditEventId) {
+    return `audit:${auditEventId}`;
+  }
+  throw new Error("Outbox payload did not contain an event id");
+}
+
+/** Reads one string field from a jsonb payload decoded by pg. */
+function stringJsonField(
+  payload: Record<string, unknown>,
+  fieldName: string
+): string | undefined {
+  const value = payload[fieldName];
+  return typeof value === "string" ? value : undefined;
+}
+
+/** Leaves bookmarks pointing at missing event rows to prove reset does not read first. */
+async function breakDomainEventBookmarkReference(pool: Pool): Promise<void> {
+  await pool.query("DELETE FROM fleet_persistence.domain_events");
+}
 
 /** Removes prior fixture rows so the opt-in DB test can be rerun locally. */
 async function deletePreservedFactLogFixtures(
