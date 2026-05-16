@@ -52,6 +52,10 @@ Terminal 1, start the Fleet Platform API without demo admin endpoints:
 pnpm --filter @roboops/fleet-platform dev
 ```
 
+Fleet Platform uses in-memory persistence by default. To opt into Postgres,
+apply the `@roboops/fleet-persistence` migrations first, then set
+`FLEET_PERSISTENCE_MODE=postgres` and `FLEET_PERSISTENCE_DATABASE_URL`.
+
 Or start it with protected demo reset/control endpoints enabled:
 
 ```sh
@@ -112,7 +116,7 @@ pnpm --filter @roboops/operator-ui dev
 
 Open `http://127.0.0.1:4020`. With demo controls disabled, use **Create
 Mission** to dispatch the default `GO_TO_POSE` command. With demo controls
-enabled, use **Reset State** to clear residual in-memory missions, or **Start
+enabled, use **Reset State** to clear residual repository state, or **Start
 Clean Mission** to reset and dispatch the normal demo `GO_TO_POSE` in one
 action. The UI disables mission creation while `robot-a` already has active
 work, and blocked/rejected mission rows show the platform reason when one is
@@ -163,7 +167,8 @@ resumes telemetry.
 ## Current Status
 
 This repository is a pnpm monorepo with shared fleet protocol contracts, a
-domain state machine, an in-memory Fleet Platform API/WebSocket gateway, and a
-local cloud-edge simulator. `apps/operator-ui` now provides a lightweight local
-operator console for creating/cancelling missions and watching robot freshness,
-mission state, and audit events without curl.
+domain state machine, a Fleet Platform API/WebSocket gateway with in-memory
+persistence by default and explicit Postgres opt-in, and a local cloud-edge
+simulator. `apps/operator-ui` now provides a lightweight local operator console
+for creating/cancelling missions and watching robot freshness, mission state,
+and audit events without curl.

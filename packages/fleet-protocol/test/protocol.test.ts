@@ -7,7 +7,7 @@ import {
   validateCommandPayload
 } from "../src/index.js";
 
-describe("fleet protocol phase 1 contracts", () => {
+describe("fleet protocol contracts", () => {
   it("exports JSON Schema objects for versioned protocol messages", () => {
     const schemas = getProtocolJsonSchemas();
 

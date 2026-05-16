@@ -8,7 +8,7 @@ export interface StructuredLogger {
   error(message: string, fields?: LogFields): void;
 }
 
-/** JSON console logger used by the Phase 2 API service. */
+/** JSON console logger used by the Fleet Platform API service. */
 export class ConsoleStructuredLogger implements StructuredLogger {
   info(message: string, fields: LogFields = {}): void {
     writeLog("info", message, fields);

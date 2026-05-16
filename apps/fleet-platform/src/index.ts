@@ -24,6 +24,8 @@ export type {
 export type {
   CreateMissionRequest,
   EdgeWireMessage,
+  FleetPersistenceConfig,
+  FleetPersistenceMode,
   FleetPlatformConfig,
   PlatformWireMessage,
   RequestContext

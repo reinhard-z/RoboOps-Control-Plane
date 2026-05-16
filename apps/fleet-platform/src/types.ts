@@ -10,7 +10,20 @@ import type {
   SafetyClass
 } from "@roboops/fleet-protocol";
 
-/** Runtime configuration for the Phase 2 Fleet Platform process. */
+/** Supported repository adapters for Fleet Platform domain state. */
+export type FleetPersistenceMode = "in-memory" | "postgres";
+
+/** Repository configuration that keeps durable storage explicitly opt-in. */
+export type FleetPersistenceConfig =
+  | {
+      readonly mode: "in-memory";
+    }
+  | {
+      readonly mode: "postgres";
+      readonly databaseUrl: string;
+    };
+
+/** Runtime configuration for the Fleet Platform process. */
 export interface FleetPlatformConfig {
   readonly host: string;
   readonly port: number;
@@ -20,6 +33,7 @@ export interface FleetPlatformConfig {
   readonly corsAllowOrigin: string;
   readonly defaultCommandTtlMs: number;
   readonly telemetryFreshnessSweepMs: number;
+  readonly persistence: FleetPersistenceConfig;
 }
 
 /** Per-request context propagated into domain commands, logs, and responses. */

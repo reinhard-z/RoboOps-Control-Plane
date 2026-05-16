@@ -2,7 +2,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Socket } from "node:net";
 
 import type { DomainState } from "@roboops/fleet-domain";
-import { InMemoryDomainStateRepository } from "@roboops/fleet-persistence";
+import {
+  type DomainStateRepository,
+  InMemoryDomainStateRepository,
+  PostgresDomainStateRepository
+} from "@roboops/fleet-persistence";
 
 import { loadFleetPlatformConfig } from "./config.js";
 import { PlatformEventHub, type PlatformStreamEvent } from "./event-hub.js";
@@ -32,12 +36,14 @@ export interface FleetPlatformRuntime {
   readonly eventHub: PlatformEventHub;
   readonly edgeGateway: EdgeWebSocketGateway;
   readonly config: FleetPlatformConfig;
+  readonly repository: DomainStateRepository;
   stop(): Promise<void>;
 }
 
 /** Optional dependency overrides for tests or embedded local demos. */
 export interface FleetPlatformRuntimeOptions {
   readonly config?: Partial<FleetPlatformConfig>;
+  /** Initial state is intentionally limited to the in-memory adapter used by tests and demos. */
   readonly initialState?: DomainState;
   readonly logger?: StructuredLogger;
 }
@@ -46,16 +52,19 @@ export interface FleetPlatformRuntimeOptions {
 export function createFleetPlatformRuntime(
   options: FleetPlatformRuntimeOptions = {}
 ): FleetPlatformRuntime {
-  const config = {
-    ...loadFleetPlatformConfig(),
+  const config = normalizeFleetPlatformConfig({
+    ...loadRuntimeBaseConfig(options.config),
     ...options.config
-  };
+  });
   const logger = options.logger ?? new ConsoleStructuredLogger();
-  const repository = new InMemoryDomainStateRepository(
-    options.initialState ?? createSeededDomainState(config.demoRobotId)
-  );
+  const runtimeRepository = createRuntimeRepository(config, options.initialState);
   const eventHub = new PlatformEventHub();
-  const service = new FleetPlatformService(repository, eventHub, logger, config);
+  const service = new FleetPlatformService(
+    runtimeRepository.repository,
+    eventHub,
+    logger,
+    config
+  );
   const edgeGateway = new EdgeWebSocketGateway(service, logger);
   service.setEdgeTransport(edgeGateway);
 
@@ -84,11 +93,77 @@ export function createFleetPlatformRuntime(
     eventHub,
     edgeGateway,
     config,
+    repository: runtimeRepository.repository,
     async stop(): Promise<void> {
       await stopFreshnessSweep();
       await edgeGateway.closeAll();
+      await runtimeRepository.close();
     }
   };
+}
+
+/** Loads env defaults while allowing explicit runtime persistence config to win. */
+function loadRuntimeBaseConfig(
+  configOverride: Partial<FleetPlatformConfig> | undefined
+): FleetPlatformConfig {
+  if (!configOverride?.persistence) {
+    return loadFleetPlatformConfig();
+  }
+  return loadFleetPlatformConfig({
+    ...process.env,
+    FLEET_PERSISTENCE_MODE: "in-memory",
+    FLEET_PERSISTENCE_DATABASE_URL: undefined
+  });
+}
+
+/** Builds the configured repository without doing database migrations at server startup. */
+function createRuntimeRepository(
+  config: FleetPlatformConfig,
+  initialState: DomainState | undefined
+): {
+  readonly repository: DomainStateRepository;
+  readonly close: () => Promise<void>;
+} {
+  if (config.persistence.mode === "postgres") {
+    if (initialState) {
+      throw new Error("initialState is only supported with in-memory persistence");
+    }
+    const repository = new PostgresDomainStateRepository({
+      databaseUrl: config.persistence.databaseUrl
+    });
+    return {
+      repository,
+      close: () => repository.close()
+    };
+  }
+
+  return {
+    repository: new InMemoryDomainStateRepository(
+      initialState ?? createSeededDomainState(config.demoRobotId)
+    ),
+    close: async () => undefined
+  };
+}
+
+/** Revalidates config overrides supplied directly by embedded callers and tests. */
+function normalizeFleetPlatformConfig(config: FleetPlatformConfig): FleetPlatformConfig {
+  const persistence = config.persistence as {
+    readonly mode?: string;
+    readonly databaseUrl?: string;
+  };
+  if (persistence.mode === "in-memory") {
+    return config;
+  }
+  if (persistence.mode === "postgres") {
+    if (!persistence.databaseUrl || persistence.databaseUrl.trim().length === 0) {
+      throw new Error("persistence.databaseUrl is required for Postgres persistence");
+    }
+    return config;
+  }
+  throw new Error(
+    `Unsupported persistence.mode "${persistence.mode ?? "unknown"}". ` +
+      'Use "in-memory" or "postgres".'
+  );
 }
 
 /** Starts the Fleet Platform HTTP server and resolves when it is listening. */

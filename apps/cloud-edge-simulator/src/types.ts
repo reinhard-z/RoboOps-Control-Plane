@@ -41,7 +41,7 @@ export interface SimulatorState {
   readonly reconnectHandshakeSent: boolean;
 }
 
-/** Platform message subset the simulator currently needs to make Phase 2 demos run. */
+/** Platform message subset the simulator currently needs for local demos. */
 export type SimulatorPlatformMessage =
   | { readonly type: "platform.command"; readonly payload: CommandEnvelopeV1 }
   | { readonly type: "platform.ping"; readonly payload: { readonly sentAt: string } }
@@ -80,4 +80,3 @@ export interface SimulatorStep {
   readonly outbound: readonly SimulatorEdgeMessage[];
   readonly actions: readonly SimulatorAction[];
 }
-

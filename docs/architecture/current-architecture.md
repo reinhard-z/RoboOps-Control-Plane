@@ -11,12 +11,13 @@ operator console slice for the incident demo.
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
 - `packages/fleet-persistence`: repository contract, in-memory `DomainState`
-  implementation used by the runtime today, Postgres migrations, and an opt-in
-  Postgres repository adapter for durable storage validation.
+  implementation used by default, Postgres migrations, and an opt-in Postgres
+  repository adapter for durable runtime state.
 - `packages/test-support`: fake clock/test helpers.
 - Domain tests proving the incident path without API, DB, UI, or simulator.
-- `apps/fleet-platform`: in-memory HTTP API, SSE stream, edge WebSocket gateway,
-  queued command delivery, cancel command flow, and telemetry freshness sweep.
+- `apps/fleet-platform`: HTTP API, SSE stream, edge WebSocket gateway, queued
+  command delivery, cancel command flow, telemetry freshness sweep, and explicit
+  runtime persistence selection with in-memory as the default.
 - `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
   `edge.hello`, accepts `GO_TO_POSE` and `CANCEL_MISSION`, emits accepted acks,
   sends heartbeats, and can simulate stale telemetry or reconnect handshakes.
@@ -41,7 +42,7 @@ flowchart LR
     Domain["fleet-domain<br/>pure reducers"]
     Protocol["fleet-protocol<br/>contracts + schemas"]
     Api["fleet-platform<br/>HTTP/SSE/WebSocket"]
-    Persistence["fleet-persistence<br/>repository contract<br/>in-memory state<br/>Postgres adapter + migrations"]
+    Persistence["fleet-persistence<br/>repository contract<br/>in-memory default<br/>Postgres adapter + migrations"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
     UI["operator-ui<br/>local browser console"]
     Tests --> Domain
@@ -77,7 +78,7 @@ flowchart LR
 
   API --> Domain["fleet-domain<br/>business rules"]
   Domain -->|"DomainTransition"| API
-  API --> Store["fleet-persistence<br/>in-memory repository"]
+  API --> Store["fleet-persistence<br/>in-memory default<br/>optional Postgres repository"]
 
   API -->|"WebSocket<br/>commands"| Edge["Cloud Edge Simulator"]
   Edge -->|"acks, telemetry,<br/>reconnect handshakes"| API
@@ -88,11 +89,12 @@ flowchart LR
   UI --> Protocol
 ```
 
-The current platform has the in-memory API, a local simulator, and a local
-Operator UI. The platform exposes REST/SSE/WebSocket edges and keeps mission
-decisions inside `fleet-domain`. Queued commands are delivered after the edge sends
-`edge.hello`, which avoids double-delivery between socket upgrade and the first
-edge identity message. The simulator connects outbound to
+The current platform has a local API, a local simulator, and a local Operator UI.
+Fleet Platform defaults to the in-memory repository, and can use Postgres only
+when explicitly configured. The platform exposes REST/SSE/WebSocket edges and
+keeps mission decisions inside `fleet-domain`. Queued commands are delivered
+after the edge sends `edge.hello`, which avoids double-delivery between socket
+upgrade and the first edge identity message. The simulator connects outbound to
 `/edge/connect?robotId=...` and uses the same protocol payloads future ROS 2
 edge code must produce.
 
@@ -173,10 +175,9 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 
 - Continue in `apps/fleet-platform` and `apps/cloud-edge-simulator`; the first
   API/gateway and local edge slices are implemented.
-- Keep a single in-memory `DomainState` behind the `fleet-persistence`
-  repository contract and Fleet Platform service functions. The package now
-  owns Postgres migrations and a Postgres repository adapter, but Fleet
-  Platform is not switched to Postgres yet.
+- Keep `DomainState` behind the `fleet-persistence` repository contract and
+  Fleet Platform service functions. Fleet Platform defaults to the in-memory
+  adapter; Postgres is selected only with explicit runtime configuration.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
 - Publish reducer-produced `domainEvents` and `auditEvents` to API responses/SSE.
@@ -190,7 +191,8 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 
 ## Local Demo Wiring
 
-Optional local Postgres for schema and adapter work:
+Optional local Postgres for schema, adapter, and explicit runtime persistence
+work:
 
 ```sh
 docker-compose -f infra/docker-compose/docker-compose.local.yml up -d postgres
@@ -200,8 +202,8 @@ docker-compose -f infra/docker-compose/docker-compose.local.yml up -d postgres
 PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence migrate:local
 ```
 
-This database is currently for migration and schema validation only; the Fleet
-Platform runtime below still uses the in-memory repository.
+Fleet Platform does not run migrations during normal server startup. Apply the
+migrations before starting the platform in Postgres mode.
 
 Run the optional Postgres-backed repository checks against a disposable local
 database:
@@ -212,10 +214,20 @@ FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@12
 PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence test
 ```
 
-Run the Fleet Platform on its default local port. Demo admin endpoints are
-disabled unless both `DEMO_MODE=true` and `DEMO_ADMIN_TOKEN` are set:
+Run Fleet Platform with the default in-memory repository by leaving persistence
+env vars unset. Demo admin endpoints are disabled unless both `DEMO_MODE=true`
+and `DEMO_ADMIN_TOKEN` are set:
 
 ```sh
+pnpm --filter @roboops/fleet-platform dev
+```
+
+Run Fleet Platform against the migrated local Postgres database only when both
+runtime persistence env vars are set:
+
+```sh
+FLEET_PERSISTENCE_MODE=postgres \
+FLEET_PERSISTENCE_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
 pnpm --filter @roboops/fleet-platform dev
 ```
 
@@ -263,7 +275,7 @@ the platform sweep can mark the robot and active mission degraded.
 handshake, and resumes telemetry.
 
 The Operator UI demo controls call the existing `/demo/*` endpoints with the
-configured token. `Reset State` replaces in-memory Fleet Platform state with a
+configured token. `Reset State` replaces Fleet Platform repository state with a
 clean `robot-a` baseline, and `Start Clean Mission` resets before dispatching
 the normal demo `GO_TO_POSE` so prior smoke-test missions do not confuse the
 demo.

@@ -1,4 +1,8 @@
-import type { FleetPlatformConfig } from "./types.js";
+import type {
+  FleetPersistenceConfig,
+  FleetPersistenceMode,
+  FleetPlatformConfig
+} from "./types.js";
 
 /** Converts environment variables into a typed server configuration. */
 export function loadFleetPlatformConfig(
@@ -20,7 +24,8 @@ export function loadFleetPlatformConfig(
     telemetryFreshnessSweepMs: parsePositiveInteger(
       env["TELEMETRY_FRESHNESS_SWEEP_MS"],
       1_000
-    )
+    ),
+    persistence: parsePersistenceConfig(env)
   };
 }
 
@@ -40,4 +45,42 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
     return parsed;
   }
   return fallback;
+}
+
+/** Converts persistence env vars into an explicit repository adapter choice. */
+function parsePersistenceConfig(env: NodeJS.ProcessEnv): FleetPersistenceConfig {
+  const mode = parsePersistenceMode(env["FLEET_PERSISTENCE_MODE"]);
+  if (mode === "in-memory") {
+    return { mode };
+  }
+
+  const databaseUrl = parseOptionalText(env["FLEET_PERSISTENCE_DATABASE_URL"]);
+  if (!databaseUrl) {
+    throw new Error(
+      "FLEET_PERSISTENCE_DATABASE_URL is required when FLEET_PERSISTENCE_MODE=postgres"
+    );
+  }
+  return { mode, databaseUrl };
+}
+
+/** Defaults to the local in-memory adapter unless Postgres is explicitly selected. */
+function parsePersistenceMode(value: string | undefined): FleetPersistenceMode {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized === "in-memory") {
+    return "in-memory";
+  }
+  if (normalized === "postgres") {
+    return "postgres";
+  }
+  throw new Error(
+    `Unsupported FLEET_PERSISTENCE_MODE "${value}". Use "in-memory" or "postgres".`
+  );
+}
+
+/** Treats blank env vars as absent while preserving the caller's actual value. */
+function parseOptionalText(value: string | undefined): string | undefined {
+  if (value === undefined || value.trim().length === 0) {
+    return undefined;
+  }
+  return value;
 }
