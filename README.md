@@ -130,6 +130,16 @@ docker build -f infra/container-images/Dockerfile \
   -t roboops/event-worker:local .
 ```
 
+GitHub Actions builds the same image matrix on every push and pull request.
+Pushes to `main`, git tags, or manual workflow runs publish GHCR images:
+
+```text
+ghcr.io/<owner>/roboops-fleet-platform:sha-<commit-sha>
+ghcr.io/<owner>/roboops-operator-ui:sha-<commit-sha>
+ghcr.io/<owner>/roboops-cloud-edge-simulator:sha-<commit-sha>
+ghcr.io/<owner>/roboops-event-worker:sha-<commit-sha>
+```
+
 Run the in-memory Fleet Platform, Operator UI, and simulator:
 
 ```sh
