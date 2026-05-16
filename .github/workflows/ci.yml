@@ -1,0 +1,39 @@
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+
+    env:
+      CI: true
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Postgres-backed tests remain opt-in via ROBOOPS_RUN_POSTGRES_TESTS=true.
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
