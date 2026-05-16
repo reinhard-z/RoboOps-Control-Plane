@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: roboops-edge
+  labels:
+    app.kubernetes.io/name: roboops-edge
+    app.kubernetes.io/part-of: roboops-control-plane
+    app.kubernetes.io/component: edge-runtime

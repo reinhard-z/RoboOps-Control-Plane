@@ -285,6 +285,10 @@ For a faster non-ROS compiler smoke check:
 sh edge/ros2-edge-agent-cpp/scripts/run-static-smoke.sh
 ```
 
+The Kubernetes edge operations reference in `infra/k8s/edge` shows how to run
+that robot-near agent from a k3s-compatible cluster without changing the Fleet
+Platform protocol or exposing ROS2/DDS to the cloud.
+
 ## Evidence Capture Demo Script
 
 Use these commands when recording public-demo clips from a clean local run.

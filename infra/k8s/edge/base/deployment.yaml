@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robot-edge-agent
+  labels:
+    app.kubernetes.io/name: robot-edge-agent
+    app.kubernetes.io/instance: edge-reference
+    app.kubernetes.io/part-of: roboops-control-plane
+    app.kubernetes.io/component: edge-agent
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    # A robot-near edge agent should not have two revisions active for one robot id.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: robot-edge-agent
+      app.kubernetes.io/instance: edge-reference
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: robot-edge-agent
+        app.kubernetes.io/instance: edge-reference
+        app.kubernetes.io/part-of: roboops-control-plane
+        app.kubernetes.io/component: edge-agent
+    spec:
+      serviceAccountName: robot-edge-agent
+      automountServiceAccountToken: false
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: robot-edge-agent
+          image: ghcr.io/example-org/roboops-ros2-edge-agent-cpp:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FLEET_PLATFORM_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: robot-edge-agent-config
+                  key: fleetPlatformUrl
+            - name: ROBOT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: robot-edge-agent-config
+                  key: robotId
+            - name: EDGE_AGENT_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: robot-edge-agent-config
+                  key: edgeAgentVersion
+            - name: ROS_LOG_DIR
+              value: /tmp/ros/log
+            - name: RCUTILS_LOGGING_USE_STDOUT
+              value: "1"
+            - name: RCUTILS_LOGGING_BUFFERED_STREAM
+              value: "1"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          # Probes wait for an explicit edge-agent health contract; this pod has no Service.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
