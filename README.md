@@ -19,6 +19,7 @@ operator creates mission
 
 ```sh
 pnpm install
+pnpm dev
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -30,9 +31,20 @@ client that ships with modern Node.
 
 ## Local Incident Demo
 
-The demo endpoints and UI demo controls are disabled by default. For the local
-reset/control loop, use the same demo token in the Fleet Platform and Operator
-UI terminals.
+Run the full local stack from the repo root:
+
+```sh
+pnpm dev
+```
+
+This starts every workspace app that has a dev script in parallel, including
+the Fleet Platform API, cloud-edge simulator, Operator UI, and event worker.
+The Operator UI is available at `http://127.0.0.1:4020`.
+
+The demo endpoints and UI demo controls are disabled by default. Use the
+per-app commands below when you want to override scenarios or enable the local
+reset/control loop. For that loop, use the same demo token in the Fleet
+Platform and Operator UI terminals.
 
 Terminal 1, start the Fleet Platform API without demo admin endpoints:
 
