@@ -289,6 +289,11 @@ The Kubernetes edge operations reference in `infra/k8s/edge` shows how to run
 that robot-near agent from a k3s-compatible cluster without changing the Fleet
 Platform protocol or exposing ROS2/DDS to the cloud.
 
+`docs/robot-software-rollout.md` and
+`infra/argocd/applications/robot-edge-agent-reference.yaml` add the narrow
+GitOps reference for edge-agent software rollout. ArgoCD deploys image/config
+versions only; Fleet Platform remains responsible for mission dispatch.
+
 ## Evidence Capture Demo Script
 
 Use these commands when recording public-demo clips from a clean local run.
