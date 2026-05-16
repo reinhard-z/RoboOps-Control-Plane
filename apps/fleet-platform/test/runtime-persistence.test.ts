@@ -8,9 +8,11 @@ import {
 import {
   type FleetPlatformRuntime,
   SilentStructuredLogger,
+  type StructuredLogger,
   createFleetPlatformRuntime,
   loadFleetPlatformConfig
 } from "../src/index.js";
+import type { LogFields } from "../src/logging.js";
 
 const testDatabaseUrl =
   "postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane";
@@ -105,7 +107,51 @@ describe("fleet platform persistence configuration", () => {
     });
     expect(runtime.repository).toBeInstanceOf(PostgresDomainStateRepository);
   });
+
+  it("logs the selected persistence mode without exposing the database URL", () => {
+    const logger = new CapturingStructuredLogger();
+
+    runtime = createFleetPlatformRuntime({
+      config: {
+        persistence: {
+          mode: "postgres",
+          databaseUrl: testDatabaseUrl
+        },
+        telemetryFreshnessSweepMs: 60_000
+      },
+      logger
+    });
+
+    expect(logger.entries).toContainEqual({
+      level: "info",
+      message: "fleet platform persistence configured",
+      fields: { persistenceMode: "postgres" }
+    });
+    expect(JSON.stringify(logger.entries)).not.toContain(testDatabaseUrl);
+    expect(JSON.stringify(logger.entries)).not.toContain("roboops_local_password");
+  });
 });
+
+/** Captures structured logs so runtime diagnostics can be asserted directly. */
+class CapturingStructuredLogger implements StructuredLogger {
+  readonly entries: Array<{
+    readonly level: "info" | "warn" | "error";
+    readonly message: string;
+    readonly fields: LogFields;
+  }> = [];
+
+  info(message: string, fields: LogFields = {}): void {
+    this.entries.push({ level: "info", message, fields });
+  }
+
+  warn(message: string, fields: LogFields = {}): void {
+    this.entries.push({ level: "warn", message, fields });
+  }
+
+  error(message: string, fields: LogFields = {}): void {
+    this.entries.push({ level: "error", message, fields });
+  }
+}
 
 /** Runs a callback with Fleet Platform persistence env vars removed for default-path tests. */
 async function withFleetPersistenceEnvCleared(

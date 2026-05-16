@@ -39,6 +39,9 @@ pnpm --filter @roboops/fleet-platform dev
 ```
 
 Normal server startup does not run migrations automatically.
+After startup, `/health/ready` verifies that the configured repository can read
+the current domain state. In Postgres mode it returns `503` with a sanitized
+structured error when the database is unavailable or not migrated.
 
 Run the optional DB-backed schema and repository adapter tests against a
 disposable local database:

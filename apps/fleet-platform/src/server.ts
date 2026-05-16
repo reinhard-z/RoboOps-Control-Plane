@@ -29,6 +29,8 @@ import {
 } from "./validation.js";
 import { EdgeWebSocketGateway } from "./websocket.js";
 
+const readinessRepositoryReadTimeoutMs = 2_000;
+
 /** Constructed Fleet Platform runtime used by CLI startup and integration tests. */
 export interface FleetPlatformRuntime {
   readonly server: Server;
@@ -57,6 +59,9 @@ export function createFleetPlatformRuntime(
     ...options.config
   });
   const logger = options.logger ?? new ConsoleStructuredLogger();
+  logger.info("fleet platform persistence configured", {
+    persistenceMode: config.persistence.mode
+  });
   const runtimeRepository = createRuntimeRepository(config, options.initialState);
   const eventHub = new PlatformEventHub();
   const service = new FleetPlatformService(
@@ -129,7 +134,10 @@ function createRuntimeRepository(
       throw new Error("initialState is only supported with in-memory persistence");
     }
     const repository = new PostgresDomainStateRepository({
-      databaseUrl: config.persistence.databaseUrl
+      databaseUrl: config.persistence.databaseUrl,
+      poolConfig: {
+        connectionTimeoutMillis: readinessRepositoryReadTimeoutMs
+      }
     });
     return {
       repository,
@@ -247,10 +255,14 @@ async function handleHttpRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/health/ready") {
-    sendJson(response, config, 200, {
-      status: "ready",
-      sseSubscribers: eventHub.listenerCount()
-    });
+    await sendReadinessResponse(
+      response,
+      service,
+      eventHub,
+      config,
+      context,
+      logger
+    );
     return;
   }
 
@@ -366,6 +378,74 @@ async function handleHttpRequest(
   }
 
   sendError(response, config, 404, "NOT_FOUND", "route not found", context);
+}
+
+/** Verifies the configured repository can load the current domain aggregate. */
+async function sendReadinessResponse(
+  response: ServerResponse,
+  service: FleetPlatformService,
+  eventHub: PlatformEventHub,
+  config: FleetPlatformConfig,
+  context: RequestContext,
+  logger: StructuredLogger
+): Promise<void> {
+  try {
+    await readStateForReadiness(service);
+    sendJson(response, config, 200, {
+      status: "ready",
+      persistence: {
+        mode: config.persistence.mode
+      },
+      sseSubscribers: eventHub.listenerCount()
+    });
+  } catch (error: unknown) {
+    logger.warn("persistence readiness check failed", {
+      correlationId: context.correlationId,
+      persistenceMode: config.persistence.mode,
+      check: "repository.read",
+      errorType: classifyError(error)
+    });
+    sendError(
+      response,
+      config,
+      503,
+      "PERSISTENCE_NOT_READY",
+      "persistence backend is not ready",
+      context,
+      {
+        persistenceMode: config.persistence.mode,
+        check: "repository.read"
+      }
+    );
+  }
+}
+
+/** Bounds the readiness repository check so unavailable backing services fail fast. */
+async function readStateForReadiness(service: FleetPlatformService): Promise<void> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      service.getState(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new ReadinessTimeoutError(readinessRepositoryReadTimeoutMs));
+        }, readinessRepositoryReadTimeoutMs);
+        timeout.unref();
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+/** Internal readiness sentinel that avoids exposing raw repository error text. */
+class ReadinessTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`repository readiness check exceeded ${timeoutMs}ms`);
+    this.name = "ReadinessTimeoutError";
+  }
 }
 
 /** Handles demo-only fault and scenario endpoints after applying demo auth gates. */
@@ -624,6 +704,14 @@ function sendError(
     }
   };
   sendJson(response, config, statusCode, body);
+}
+
+/** Classifies errors for diagnostics without leaking driver text or connection details. */
+function classifyError(error: unknown): string {
+  if (error instanceof Error && error.name.length > 0) {
+    return error.name;
+  }
+  return typeof error;
 }
 
 /** Applies permissive local CORS headers for the upcoming operator UI app. */

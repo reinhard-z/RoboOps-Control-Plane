@@ -17,7 +17,9 @@ operator console slice for the incident demo.
 - Domain tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: HTTP API, SSE stream, edge WebSocket gateway, queued
   command delivery, cancel command flow, telemetry freshness sweep, and explicit
-  runtime persistence selection with in-memory as the default.
+  runtime persistence selection with in-memory as the default. `/health/live`
+  is a cheap process liveness check, while `/health/ready` verifies that the
+  configured repository can read the current domain state.
 - `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
   `edge.hello`, accepts `GO_TO_POSE` and `CANCEL_MISSION`, emits accepted acks,
   sends heartbeats, and can simulate stale telemetry or reconnect handshakes.
@@ -204,6 +206,9 @@ PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistenc
 
 Fleet Platform does not run migrations during normal server startup. Apply the
 migrations before starting the platform in Postgres mode.
+
+In Postgres mode, `/health/ready` returns `503` with a sanitized structured
+error if the database is unavailable or the migrations have not been applied.
 
 Run the optional Postgres-backed repository checks against a disposable local
 database:
