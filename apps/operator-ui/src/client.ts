@@ -1,19 +1,21 @@
 import { FleetPlatformApiClient } from "./api-client.js";
 import {
+  renderActionMessage,
+  renderMissionRows,
+  renderSelectedMissionDetails
+} from "./mission-dom.js";
+import {
   formatBattery,
   formatCancelRejectionMessage,
   formatCommandRejectionMessage,
-  formatMissionFailureReason,
   formatRelativeTime,
   isActiveMissionState,
   missionCreationAvailability,
-  missionStateSummary,
   parsePoseNumber,
   selectDefaultMission,
   sortMissions,
   statusToneForConnection,
   statusToneForHealth,
-  statusToneForMission,
   summarizeStreamEvent,
   telemetryAgeMs,
   type EventSummary,
@@ -426,86 +428,22 @@ function renderMissions(): void {
     return;
   }
 
-  const rows = state.missions.map((mission) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = mission.missionId === state.selectedMissionId
-      ? "mission-row selected"
-      : "mission-row";
-    button.addEventListener("click", () => {
-      state.selectedMissionId = mission.missionId;
+  const rows = renderMissionRows(
+    document,
+    state.missions,
+    state.selectedMissionId,
+    (missionId) => {
+      state.selectedMissionId = missionId;
       render();
-    });
-
-    const copy = document.createElement("span");
-    copy.className = "mission-copy";
-    const id = document.createElement("span");
-    id.className = "mission-id";
-    id.textContent = mission.missionId;
-    const meta = document.createElement("span");
-    meta.className = "mission-meta";
-    meta.textContent = `${mission.lifecycleState} · ${formatRelativeTime(mission.updatedAt)}`;
-    const reason = formatMissionFailureReason(mission);
-    if (reason) {
-      const reasonText = document.createElement("span");
-      reasonText.className = "mission-reason";
-      reasonText.textContent = `Reason: ${reason}`;
-      copy.append(id, meta, reasonText);
-    } else {
-      copy.append(id, meta);
     }
-
-    const status = document.createElement("span");
-    status.className = `status-pill tone-${statusToneForMission(mission)}`;
-    status.textContent = missionRowStatusLabel(mission);
-    button.append(copy, status);
-    return button;
-  });
+  );
 
   refs.missionList.replaceChildren(...rows);
 }
 
 /** Renders lifecycle, operational status, current command, and ack progress. */
 function renderMissionDetails(): void {
-  const mission = selectedMission();
-  if (!mission) {
-    refs.missionId.textContent = "none";
-    setStatusPill(refs.missionState, "none", "neutral");
-    refs.missionStateDetail.textContent = "No mission selected";
-    setStatusPill(refs.missionLifecycle, "none", "neutral");
-    setStatusPill(refs.missionOperational, "none", "neutral");
-    refs.missionCommand.textContent = "none";
-    refs.missionAck.textContent = "none";
-    refs.missionReason.textContent = "none";
-    return;
-  }
-
-  const stateSummary = missionStateSummary(mission);
-  refs.missionId.textContent = mission.missionId;
-  setStatusPill(refs.missionState, stateSummary.label, stateSummary.tone);
-  refs.missionStateDetail.textContent = stateSummary.detail;
-  setStatusPill(
-    refs.missionLifecycle,
-    mission.lifecycleState,
-    statusToneForMission(mission)
-  );
-  setStatusPill(
-    refs.missionOperational,
-    mission.operationalStatus,
-    mission.operationalStatus === "NOMINAL" || mission.operationalStatus === "RECOVERED"
-      ? "online"
-      : mission.operationalStatus === "RECONNECTING" ||
-          mission.operationalStatus === "RECONCILING"
-        ? "reconnecting"
-        : "degraded"
-  );
-  refs.missionCommand.textContent = mission.currentCommandId
-    ? `${mission.currentCommandId}${mission.lastCommandSequence ? ` · seq ${mission.lastCommandSequence}` : ""}`
-    : "none";
-  refs.missionAck.textContent = mission.lastAcknowledgedCommandId
-    ? `${mission.lastAcknowledgedCommandId}${mission.lastAcknowledgedCommandSequence ? ` · seq ${mission.lastAcknowledgedCommandSequence}` : ""}`
-    : "none";
-  refs.missionReason.textContent = formatMissionFailureReason(mission) ?? "none";
+  renderSelectedMissionDetails(refs, selectedMission());
 }
 
 /** Renders the bounded live event feed. */
@@ -543,8 +481,11 @@ function renderEvents(): void {
 function renderActionState(): void {
   const mission = selectedMission();
   const availability = missionCreationAvailability(state.missions, state.robot);
-  refs.actionMessage.textContent = state.actionMessage;
-  refs.actionMessage.classList.toggle("error", state.actionMessageIsError);
+  renderActionMessage(
+    refs.actionMessage,
+    state.actionMessage,
+    state.actionMessageIsError
+  );
   refs.createMissionButton.disabled =
     state.busyAction !== undefined || !availability.canCreate;
   refs.createMissionButton.textContent =
@@ -597,24 +538,6 @@ function selectedMission(): MissionSnapshot | undefined {
     state.robot,
     state.selectedMissionId
   );
-}
-
-/** Shows mission state categories in rows when operational status is generic. */
-function missionRowStatusLabel(mission: MissionSnapshot): string {
-  const stateSummary = missionStateSummary(mission);
-  if (stateSummary.kind === "blocked") {
-    return "BLOCKED";
-  }
-
-  if (stateSummary.kind === "manual-review") {
-    return "REVIEW";
-  }
-
-  if (stateSummary.kind === "terminal") {
-    return mission.lifecycleState;
-  }
-
-  return mission.operationalStatus;
 }
 
 /** Reads the pose form using defaults when a field is blank or invalid. */
