@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Socket } from "node:net";
 
 import type { DomainState } from "@roboops/fleet-domain";
+import { InMemoryDomainStateRepository } from "@roboops/fleet-persistence";
 
 import { loadFleetPlatformConfig } from "./config.js";
 import { PlatformEventHub, type PlatformStreamEvent } from "./event-hub.js";
@@ -10,10 +11,7 @@ import {
   ConsoleStructuredLogger,
   type StructuredLogger
 } from "./logging.js";
-import {
-  InMemoryDomainStateRepository,
-  createSeededDomainState
-} from "./repository.js";
+import { createSeededDomainState } from "./repository.js";
 import { FleetPlatformService } from "./service.js";
 import type {
   ApiErrorBody,
@@ -34,7 +32,7 @@ export interface FleetPlatformRuntime {
   readonly eventHub: PlatformEventHub;
   readonly edgeGateway: EdgeWebSocketGateway;
   readonly config: FleetPlatformConfig;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 /** Optional dependency overrides for tests or embedded local demos. */
@@ -78,7 +76,7 @@ export function createFleetPlatformRuntime(
       socket.destroy();
     }
   });
-  const stopFreshnessSweep = startTelemetryFreshnessSweep(service, config);
+  const stopFreshnessSweep = startTelemetryFreshnessSweep(service, config, logger);
 
   return {
     server,
@@ -86,9 +84,9 @@ export function createFleetPlatformRuntime(
     eventHub,
     edgeGateway,
     config,
-    stop(): void {
-      stopFreshnessSweep();
-      edgeGateway.closeAll();
+    async stop(): Promise<void> {
+      await stopFreshnessSweep();
+      await edgeGateway.closeAll();
     }
   };
 }
@@ -103,20 +101,37 @@ export function listenFleetPlatform(runtime: FleetPlatformRuntime): Promise<void
 /** Periodically reevaluates robot heartbeat age so stale telemetry changes state without demo hooks. */
 function startTelemetryFreshnessSweep(
   service: FleetPlatformService,
-  config: FleetPlatformConfig
-): () => void {
+  config: FleetPlatformConfig,
+  logger: StructuredLogger
+): () => Promise<void> {
+  let activeSweep: Promise<void> | undefined;
   const timer = setInterval(() => {
+    if (activeSweep) {
+      return;
+    }
+
     const now = nowIso();
-    service.evaluateAllRobotFreshness({
-      correlationId: createPlatformId("corr_freshness"),
-      causationId: "telemetry-freshness-sweep",
-      now
-    });
+    activeSweep = service
+      .evaluateAllRobotFreshness({
+        correlationId: createPlatformId("corr_freshness"),
+        causationId: "telemetry-freshness-sweep",
+        now
+      })
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        logger.error("telemetry freshness sweep failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        activeSweep = undefined;
+      });
   }, config.telemetryFreshnessSweepMs);
 
   timer.unref();
-  return () => {
+  return async () => {
     clearInterval(timer);
+    await activeSweep;
   };
 }
 
@@ -186,13 +201,13 @@ async function handleHttpRequest(
       return;
     }
 
-    const result = service.createMission(parsed.value, context);
+    const result = await service.createMission(parsed.value, context);
     sendDispatchResult(response, config, context, result);
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/missions") {
-    sendJson(response, config, 200, { missions: service.listMissions() });
+    sendJson(response, config, 200, { missions: await service.listMissions() });
     return;
   }
 
@@ -209,7 +224,7 @@ async function handleHttpRequest(
       return;
     }
 
-    const result = service.cancelMission(
+    const result = await service.cancelMission(
       decodeURIComponent(missionCancelMatch[1]),
       parsed.value,
       context
@@ -224,7 +239,7 @@ async function handleHttpRequest(
 
   const missionMatch = url.pathname.match(/^\/missions\/([^/]+)$/);
   if (request.method === "GET" && missionMatch?.[1]) {
-    const mission = service.getMission(decodeURIComponent(missionMatch[1]));
+    const mission = await service.getMission(decodeURIComponent(missionMatch[1]));
     if (!mission) {
       sendError(response, config, 404, "MISSION_NOT_FOUND", "mission not found", context);
       return;
@@ -234,13 +249,13 @@ async function handleHttpRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/robots") {
-    sendJson(response, config, 200, { robots: service.listRobots() });
+    sendJson(response, config, 200, { robots: await service.listRobots() });
     return;
   }
 
   const robotMatch = url.pathname.match(/^\/robots\/([^/]+)$/);
   if (request.method === "GET" && robotMatch?.[1]) {
-    const robot = service.getRobot(decodeURIComponent(robotMatch[1]));
+    const robot = await service.getRobot(decodeURIComponent(robotMatch[1]));
     if (!robot) {
       sendError(response, config, 404, "ROBOT_NOT_FOUND", "robot not found", context);
       return;
@@ -251,14 +266,14 @@ async function handleHttpRequest(
 
   if (request.method === "GET" && url.pathname === "/events") {
     sendJson(response, config, 200, {
-      events: service.listEvents(queryFilters(url))
+      events: await service.listEvents(queryFilters(url))
     });
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/audit-events") {
     sendJson(response, config, 200, {
-      auditEvents: service.listAuditEvents(queryFilters(url))
+      auditEvents: await service.listAuditEvents(queryFilters(url))
     });
     return;
   }
@@ -294,36 +309,41 @@ async function handleDemoRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/demo/scenarios/reset") {
-    sendJson(response, config, 200, { state: service.resetDemo(context) });
+    sendJson(response, config, 200, { state: await service.resetDemo(context) });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/scenarios/incident/start") {
-    sendDispatchResult(response, config, context, service.startIncident(context));
+    sendDispatchResult(response, config, context, await service.startIncident(context));
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/faults/disconnect") {
     sendJson(response, config, 200, {
-      result: service.disconnectDemoRobot(context)
+      result: await service.disconnectDemoRobot(context)
     });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/faults/reconnect") {
     sendJson(response, config, 200, {
-      result: service.reconnectDemoRobot(context)
+      result: await service.reconnectDemoRobot(context)
     });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/faults/duplicate-command") {
-    sendDispatchResult(response, config, context, service.duplicateDemoCommand(context));
+    sendDispatchResult(
+      response,
+      config,
+      context,
+      await service.duplicateDemoCommand(context)
+    );
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/faults/low-battery") {
-    sendDispatchResult(response, config, context, service.lowBatteryDemo(context));
+    sendDispatchResult(response, config, context, await service.lowBatteryDemo(context));
     return;
   }
 

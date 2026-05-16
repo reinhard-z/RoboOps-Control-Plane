@@ -8,10 +8,9 @@ export { PlatformEventHub } from "./event-hub.js";
 export type { PlatformStreamEvent } from "./event-hub.js";
 export { ConsoleStructuredLogger, SilentStructuredLogger } from "./logging.js";
 export type { StructuredLogger } from "./logging.js";
-export {
-  InMemoryDomainStateRepository,
-  createSeededDomainState
-} from "./repository.js";
+export { InMemoryDomainStateRepository } from "@roboops/fleet-persistence";
+export type { DomainStateRepository } from "@roboops/fleet-persistence";
+export { createSeededDomainState } from "./repository.js";
 export { FleetPlatformService } from "./service.js";
 export type { EdgeCommandTransport, MissionCommandServiceResult } from "./service.js";
 export {

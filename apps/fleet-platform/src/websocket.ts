@@ -107,6 +107,8 @@ class WebSocketPeer {
 /** Accepts edge WebSocket upgrades and routes edge messages into FleetPlatformService. */
 export class EdgeWebSocketGateway {
   private readonly connectionsByRobot = new Map<RobotId, Set<WebSocketPeer>>();
+  private readonly processingByRobot = new Map<RobotId, Promise<void>>();
+  private closing = false;
 
   constructor(
     private readonly service: FleetPlatformService,
@@ -119,6 +121,11 @@ export class EdgeWebSocketGateway {
       return false;
     }
 
+    if (this.closing) {
+      socket.end("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+      return true;
+    }
+
     const robotId = url.searchParams.get("robotId");
     const key = request.headers["sec-websocket-key"];
     if (!robotId || typeof key !== "string") {
@@ -127,9 +134,14 @@ export class EdgeWebSocketGateway {
     }
 
     socket.write(createUpgradeResponse(key));
-    const peer = new WebSocketPeer(
+    let peer: WebSocketPeer;
+    peer = new WebSocketPeer(
       socket,
-      (message) => this.handlePeerMessage(robotId, peer, message),
+      (message) => {
+        this.enqueueRobotTask(robotId, peer, () =>
+          this.handlePeerMessage(robotId, peer, message)
+        );
+      },
       () => this.removePeer(robotId, peer)
     );
     this.addPeer(robotId, peer);
@@ -147,6 +159,10 @@ export class EdgeWebSocketGateway {
   }
 
   sendPlatformMessage(robotId: RobotId, message: PlatformWireMessage): number {
+    if (this.closing) {
+      return 0;
+    }
+
     const peers = this.connectionsByRobot.get(robotId);
     if (!peers || peers.size === 0) {
       this.logger.warn("edge websocket message dropped with no connected peers", {
@@ -167,13 +183,18 @@ export class EdgeWebSocketGateway {
     return peers.size;
   }
 
-  closeAll(): void {
-    for (const peers of this.connectionsByRobot.values()) {
-      for (const peer of peers) {
-        peer.close();
-      }
+  async closeAll(): Promise<void> {
+    this.closing = true;
+    const pendingTasks = [...this.processingByRobot.values()];
+    const peersToClose = [...this.connectionsByRobot.values()].flatMap((peers) => {
+      return [...peers];
+    });
+    for (const peer of peersToClose) {
+      peer.close();
     }
     this.connectionsByRobot.clear();
+    await Promise.allSettled(pendingTasks);
+    this.processingByRobot.clear();
   }
 
   /** Adds a new peer to the robot connection set. */
@@ -196,20 +217,63 @@ export class EdgeWebSocketGateway {
     }
 
     this.connectionsByRobot.delete(robotId);
-    this.service.handleEdgeDisconnected(robotId, {
+    if (this.closing) {
+      return;
+    }
+
+    const context = {
       correlationId: createPlatformId("corr_edge_disconnect"),
       causationId: createPlatformId("edge_disconnect"),
       now: nowIso()
+    };
+    this.enqueueRobotTask(robotId, undefined, async () => {
+      await this.service.handleEdgeDisconnected(robotId, context);
+      this.logger.warn("edge websocket disconnected", { robotId });
     });
-    this.logger.warn("edge websocket disconnected", { robotId });
+  }
+
+  /** Serializes async state changes per robot so edge frames keep wire order. */
+  private enqueueRobotTask(
+    robotId: RobotId,
+    peer: WebSocketPeer | undefined,
+    task: () => Promise<void>
+  ): void {
+    if (this.closing) {
+      return;
+    }
+
+    const previous = this.processingByRobot.get(robotId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(task)
+      .catch((error: unknown) => {
+        this.logger.error("edge websocket task failed", {
+          robotId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        peer?.sendJson({
+          type: "platform.error",
+          payload: {
+            code: "EDGE_MESSAGE_INTERNAL_ERROR",
+            message: "edge message handling failed"
+          }
+        });
+      });
+
+    this.processingByRobot.set(robotId, next);
+    void next.finally(() => {
+      if (this.processingByRobot.get(robotId) === next) {
+        this.processingByRobot.delete(robotId);
+      }
+    });
   }
 
   /** Parses one edge JSON message and forwards valid protocol payloads to the service. */
-  private handlePeerMessage(
+  private async handlePeerMessage(
     robotId: RobotId,
     peer: WebSocketPeer,
     messageText: string
-  ): void {
+  ): Promise<void> {
     const parsedJson = parseJson(messageText);
     if (!parsedJson.ok) {
       peer.sendJson({
@@ -242,7 +306,7 @@ export class EdgeWebSocketGateway {
       return;
     }
 
-    this.service.handleEdgeMessage(
+    await this.service.handleEdgeMessage(
       robotId,
       parsedMessage.value,
       createEdgeContextFromMessage(parsedMessage.value)

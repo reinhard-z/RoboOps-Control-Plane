@@ -22,14 +22,12 @@ import {
   type RobotId,
   protocolSchemaVersions
 } from "@roboops/fleet-protocol";
+import type { DomainStateRepository } from "@roboops/fleet-persistence";
 
 import { PlatformEventHub } from "./event-hub.js";
 import { createPlatformId, isoPlus } from "./ids.js";
 import type { StructuredLogger } from "./logging.js";
-import {
-  type DomainStateRepository,
-  createSeededDomainState
-} from "./repository.js";
+import { createSeededDomainState } from "./repository.js";
 import type {
   CancelMissionRequest,
   CreateMissionRequest,
@@ -52,7 +50,7 @@ export interface MissionCommandServiceResult {
   readonly deliveryCount: number;
 }
 
-/** Coordinates HTTP/edge requests with the pure domain reducers and in-memory repository. */
+/** Coordinates HTTP/edge requests with the pure domain reducers and repository boundary. */
 export class FleetPlatformService {
   private edgeTransport: EdgeCommandTransport | undefined;
 
@@ -67,15 +65,16 @@ export class FleetPlatformService {
     this.edgeTransport = edgeTransport;
   }
 
-  createMission(
+  async createMission(
     request: CreateMissionRequest,
     context: RequestContext
-  ): MissionCommandServiceResult {
-    this.evaluateKnownRobotFreshness(request.robotId, context);
+  ): Promise<MissionCommandServiceResult> {
+    await this.evaluateKnownRobotFreshness(request.robotId, context);
 
     const input = this.toDispatchInput(request, context);
-    const transition = dispatchMissionCommand(this.repository.read(), input);
-    this.commitTransition(transition);
+    const transition = await this.applyTransition((state) =>
+      dispatchMissionCommand(state, input)
+    );
 
     const deliveryCount =
       transition.result.status === "ACCEPTED"
@@ -94,33 +93,41 @@ export class FleetPlatformService {
     return { result: transition.result, deliveryCount };
   }
 
-  cancelMission(
+  async cancelMission(
     missionId: string,
     request: CancelMissionRequest,
     context: RequestContext
-  ): MissionCommandServiceResult | undefined {
-    const mission = getMission(this.repository.read(), missionId);
-    if (!mission) {
+  ): Promise<MissionCommandServiceResult | undefined> {
+    const commandId = request.commandId ?? createPlatformId("cmd");
+    const idempotencyKey =
+      request.idempotencyKey ?? `operator:cancel:${missionId}:${context.correlationId}`;
+    const expiresAt = isoPlus(
+      context.now,
+      request.expiresInMs ?? this.config.defaultCommandTtlMs
+    );
+    const transition = await this.repository.update((state) => {
+      const mission = getMission(state, missionId);
+      if (!mission) {
+        return { state, result: undefined };
+      }
+      const cancellation = requestMissionCancellation(state, {
+        commandId,
+        missionId,
+        idempotencyKey,
+        issuedAt: context.now,
+        expiresAt,
+        correlationId: context.correlationId,
+        causationId: context.causationId,
+        reason: request.reason,
+        now: context.now
+      });
+      return { state: cancellation.state, result: cancellation };
+    });
+
+    if (!transition) {
       return undefined;
     }
-
-    const issuedAt = context.now;
-    const transition = requestMissionCancellation(this.repository.read(), {
-      commandId: request.commandId ?? createPlatformId("cmd"),
-      missionId,
-      idempotencyKey:
-        request.idempotencyKey ?? `operator:cancel:${missionId}:${context.correlationId}`,
-      issuedAt,
-      expiresAt: isoPlus(
-        issuedAt,
-        request.expiresInMs ?? this.config.defaultCommandTtlMs
-      ),
-      correlationId: context.correlationId,
-      causationId: context.causationId,
-      reason: request.reason,
-      now: context.now
-    });
-    this.commitTransition(transition);
+    this.publishTransitionRecords(transition);
 
     const deliveryCount =
       transition.result.status === "ACCEPTED"
@@ -130,7 +137,7 @@ export class FleetPlatformService {
     this.logger.info("mission cancellation request handled", {
       correlationId: context.correlationId,
       missionId,
-      robotId: mission.robotId,
+      robotId: transition.result.mission?.robotId,
       resultStatus: transition.result.status,
       deliveryCount
     });
@@ -138,13 +145,20 @@ export class FleetPlatformService {
     return { result: transition.result, deliveryCount };
   }
 
-  evaluateAllRobotFreshness(context: RequestContext): readonly unknown[] {
-    const robotIds = Object.keys(this.repository.read().robots);
-    return robotIds.map((robotId) => this.evaluateKnownRobotFreshness(robotId, context));
+  async evaluateAllRobotFreshness(context: RequestContext): Promise<readonly unknown[]> {
+    const robotIds = Object.keys((await this.repository.read()).robots);
+    const results: unknown[] = [];
+    for (const robotId of robotIds) {
+      results.push(await this.evaluateKnownRobotFreshness(robotId, context));
+    }
+    return results;
   }
 
-  evaluateKnownRobotFreshness(robotId: RobotId, context: RequestContext): unknown {
-    const robot = getRobot(this.repository.read(), robotId);
+  async evaluateKnownRobotFreshness(
+    robotId: RobotId,
+    context: RequestContext
+  ): Promise<unknown> {
+    const robot = getRobot(await this.repository.read(), robotId);
     if (!robot) {
       return { status: "UNKNOWN_ROBOT" };
     }
@@ -152,41 +166,44 @@ export class FleetPlatformService {
     return this.evaluateRobotFreshness(robotId, context);
   }
 
-  handleEdgeConnected(
+  async handleEdgeConnected(
     robotId: RobotId,
     hello: EdgeHelloPayload | undefined,
     context: RequestContext
-  ): void {
-    const state = this.repository.read();
-    const existingRobot = state.robots[robotId];
-    const lastSeenCommandSequence = Math.max(
-      existingRobot?.lastSeenCommandSequence ?? 0,
-      hello?.lastSeenCommandSequence ?? 0
-    );
-    const nextRobot = existingRobot
-      ? {
-          ...existingRobot,
-          connectionState: "ONLINE" as const,
-          updatedAt: context.now,
-          lastSeenCommandSequence,
-          ...(hello?.edgeAgentVersion
-            ? { edgeAgentVersion: hello.edgeAgentVersion }
-            : {})
-        }
-      : {
-          robotId,
-          connectionState: "ONLINE" as const,
-          updatedAt: context.now,
-          health: "OK" as const,
-          batteryPercent: 80,
-          lastTelemetryObservedAt: context.now,
-          lastTelemetryReceivedAt: context.now,
-          lastSeenCommandSequence,
-          edgeAgentVersion: hello?.edgeAgentVersion ?? "0.1.0"
-        };
+  ): Promise<void> {
+    await this.repository.update((state) => {
+      const existingRobot = state.robots[robotId];
+      const lastSeenCommandSequence = Math.max(
+        existingRobot?.lastSeenCommandSequence ?? 0,
+        hello?.lastSeenCommandSequence ?? 0
+      );
+      const nextRobot = existingRobot
+        ? {
+            ...existingRobot,
+            connectionState: "ONLINE" as const,
+            updatedAt: context.now,
+            lastSeenCommandSequence,
+            ...(hello?.edgeAgentVersion
+              ? { edgeAgentVersion: hello.edgeAgentVersion }
+              : {})
+          }
+        : {
+            robotId,
+            connectionState: "ONLINE" as const,
+            updatedAt: context.now,
+            health: "OK" as const,
+            batteryPercent: 80,
+            lastTelemetryObservedAt: context.now,
+            lastTelemetryReceivedAt: context.now,
+            lastSeenCommandSequence,
+            edgeAgentVersion: hello?.edgeAgentVersion ?? "0.1.0"
+          };
 
-    const nextState = upsertRobotSnapshot(state, nextRobot);
-    this.repository.write(nextState);
+      return {
+        state: upsertRobotSnapshot(state, nextRobot),
+        result: undefined
+      };
+    });
     this.eventHub.publish(
       "platform",
       {
@@ -200,16 +217,17 @@ export class FleetPlatformService {
       type: "platform.ping",
       payload: { sentAt: context.now }
     });
-    this.deliverPendingCommands(robotId);
+    await this.deliverPendingCommands(robotId);
   }
 
-  handleEdgeDisconnected(robotId: RobotId, context: RequestContext): void {
-    const transition = beginReconnect(this.repository.read(), {
-      robotId,
-      now: context.now,
-      correlationId: context.correlationId
-    });
-    this.commitTransition(transition);
+  async handleEdgeDisconnected(robotId: RobotId, context: RequestContext): Promise<void> {
+    await this.applyTransition((state) =>
+      beginReconnect(state, {
+        robotId,
+        now: context.now,
+        correlationId: context.correlationId
+      })
+    );
     this.eventHub.publish(
       "platform",
       { eventType: "edge.disconnected", robotId },
@@ -217,57 +235,61 @@ export class FleetPlatformService {
     );
   }
 
-  handleEdgeMessage(
+  async handleEdgeMessage(
     robotId: RobotId,
     message: EdgeWireMessage,
     context: RequestContext
-  ): void {
+  ): Promise<void> {
     if (message.type === "edge.hello") {
-      this.handleEdgeConnected(robotId, message.payload, context);
+      await this.handleEdgeConnected(robotId, message.payload, context);
       return;
     }
 
     if (message.type === "edge.command_ack") {
-      this.commitTransition(applyCommandAck(this.repository.read(), message.payload));
+      await this.applyTransition((state) => applyCommandAck(state, message.payload));
       return;
     }
 
     if (message.type === "edge.telemetry") {
-      this.commitTransition(ingestRobotTelemetry(this.repository.read(), message.payload));
+      await this.applyTransition((state) => ingestRobotTelemetry(state, message.payload));
       return;
     }
 
-    const robot = getRobot(this.repository.read(), message.payload.robotId);
+    const robot = getRobot(await this.repository.read(), message.payload.robotId);
     if (robot && robot.connectionState !== "RECONNECTING") {
-      this.commitTransition(
-        beginReconnect(this.repository.read(), {
+      await this.applyTransition((state) =>
+        beginReconnect(state, {
           robotId: message.payload.robotId,
           now: context.now,
           correlationId: context.correlationId
         })
       );
     }
-    this.commitTransition(
-      processReconnectHandshake(this.repository.read(), message.payload, {
+    await this.applyTransition((state) =>
+      processReconnectHandshake(state, message.payload, {
         now: context.now,
         correlationId: context.correlationId
       })
     );
   }
 
-  evaluateRobotFreshness(robotId: RobotId, context: RequestContext): unknown {
-    const transition = evaluateTelemetryFreshness(this.repository.read(), {
-      robotId,
-      now: context.now,
-      correlationId: context.correlationId
-    });
-    this.commitTransition(transition);
+  async evaluateRobotFreshness(
+    robotId: RobotId,
+    context: RequestContext
+  ): Promise<unknown> {
+    const transition = await this.applyTransition((state) =>
+      evaluateTelemetryFreshness(state, {
+        robotId,
+        now: context.now,
+        correlationId: context.correlationId
+      })
+    );
     return transition.result;
   }
 
-  resetDemo(context: RequestContext): DomainState {
+  async resetDemo(context: RequestContext): Promise<DomainState> {
     const nextState = createSeededDomainState(this.config.demoRobotId, context.now);
-    this.repository.reset(nextState);
+    await this.repository.reset(nextState);
     this.eventHub.publish(
       "platform",
       { eventType: "demo.reset", robotId: this.config.demoRobotId },
@@ -276,7 +298,7 @@ export class FleetPlatformService {
     return nextState;
   }
 
-  startIncident(context: RequestContext): MissionCommandServiceResult {
+  startIncident(context: RequestContext): Promise<MissionCommandServiceResult> {
     return this.createMission(
       {
         robotId: this.config.demoRobotId,
@@ -289,38 +311,42 @@ export class FleetPlatformService {
     );
   }
 
-  disconnectDemoRobot(context: RequestContext): unknown {
+  async disconnectDemoRobot(context: RequestContext): Promise<unknown> {
     const staleAt = new Date(Date.parse(context.now) - 11_000).toISOString();
-    this.repository.update((state) => {
+    await this.repository.update((state) => {
       const robot = state.robots[this.config.demoRobotId];
       if (!robot) {
-        return state;
+        return { state, result: undefined };
       }
-      return upsertRobotSnapshot(state, {
-        ...robot,
-        connectionState: "ONLINE",
-        lastTelemetryObservedAt: staleAt,
-        lastTelemetryReceivedAt: staleAt
-      });
+      return {
+        state: upsertRobotSnapshot(state, {
+          ...robot,
+          connectionState: "ONLINE",
+          lastTelemetryObservedAt: staleAt,
+          lastTelemetryReceivedAt: staleAt
+        }),
+        result: undefined
+      };
     });
     return this.evaluateRobotFreshness(this.config.demoRobotId, context);
   }
 
-  reconnectDemoRobot(context: RequestContext): unknown {
-    const state = this.repository.read();
+  async reconnectDemoRobot(context: RequestContext): Promise<unknown> {
+    const state = await this.repository.read();
     const robot = state.robots[this.config.demoRobotId];
     if (!robot) {
       return { status: "UNKNOWN_ROBOT" };
     }
 
-    const reconnectStart = beginReconnect(state, {
-      robotId: robot.robotId,
-      now: context.now,
-      correlationId: context.correlationId
-    });
-    this.commitTransition(reconnectStart);
+    const reconnectStart = await this.applyTransition((currentState) =>
+      beginReconnect(currentState, {
+        robotId: robot.robotId,
+        now: context.now,
+        correlationId: context.correlationId
+      })
+    );
 
-    const nextState = this.repository.read();
+    const nextState = await this.repository.read();
     const activeMission = robot.activeMissionId
       ? nextState.missions[robot.activeMissionId]
       : undefined;
@@ -343,15 +369,16 @@ export class FleetPlatformService {
       lastTelemetryObservedAt: context.now,
       edgeAgentVersion: robot.edgeAgentVersion ?? "0.1.0"
     } as const;
-    const reconciled = processReconnectHandshake(this.repository.read(), handshake, {
-      now: context.now,
-      correlationId: context.correlationId
-    });
-    this.commitTransition(reconciled);
+    const reconciled = await this.applyTransition((currentState) =>
+      processReconnectHandshake(currentState, handshake, {
+        now: context.now,
+        correlationId: context.correlationId
+      })
+    );
     return reconciled.result;
   }
 
-  duplicateDemoCommand(context: RequestContext): MissionCommandServiceResult {
+  duplicateDemoCommand(context: RequestContext): Promise<MissionCommandServiceResult> {
     return this.createMission(
       {
         robotId: this.config.demoRobotId,
@@ -364,17 +391,20 @@ export class FleetPlatformService {
     );
   }
 
-  lowBatteryDemo(context: RequestContext): MissionCommandServiceResult {
-    this.repository.update((state) => {
+  async lowBatteryDemo(context: RequestContext): Promise<MissionCommandServiceResult> {
+    await this.repository.update((state) => {
       const robot = state.robots[this.config.demoRobotId];
       if (!robot) {
-        return state;
+        return { state, result: undefined };
       }
-      return upsertRobotSnapshot(state, {
-        ...robot,
-        batteryPercent: 10,
-        updatedAt: context.now
-      });
+      return {
+        state: upsertRobotSnapshot(state, {
+          ...robot,
+          batteryPercent: 10,
+          updatedAt: context.now
+        }),
+        result: undefined
+      };
     });
     return this.createMission(
       {
@@ -388,34 +418,40 @@ export class FleetPlatformService {
     );
   }
 
-  getState(): DomainState {
+  getState(): Promise<DomainState> {
     return this.repository.read();
   }
 
-  listMissions(): readonly unknown[] {
-    return Object.values(this.repository.read().missions);
+  async listMissions(): Promise<readonly unknown[]> {
+    return Object.values((await this.repository.read()).missions);
   }
 
-  getMission(missionId: string): unknown | undefined {
-    return this.repository.read().missions[missionId];
+  async getMission(missionId: string): Promise<unknown | undefined> {
+    return (await this.repository.read()).missions[missionId];
   }
 
-  listRobots(): readonly unknown[] {
-    return Object.values(this.repository.read().robots);
+  async listRobots(): Promise<readonly unknown[]> {
+    return Object.values((await this.repository.read()).robots);
   }
 
-  getRobot(robotId: string): unknown | undefined {
-    return this.repository.read().robots[robotId];
+  async getRobot(robotId: string): Promise<unknown | undefined> {
+    return (await this.repository.read()).robots[robotId];
   }
 
-  listEvents(filters: { readonly missionId?: string; readonly robotId?: string }): readonly EventEnvelopeV1[] {
-    return this.repository.read().domainEvents.filter((event) =>
+  async listEvents(filters: {
+    readonly missionId?: string;
+    readonly robotId?: string;
+  }): Promise<readonly EventEnvelopeV1[]> {
+    return (await this.repository.read()).domainEvents.filter((event) =>
       matchesEventFilters(event, filters)
     );
   }
 
-  listAuditEvents(filters: { readonly missionId?: string; readonly robotId?: string }): readonly AuditEventV1[] {
-    return this.repository.read().auditEvents.filter((event) =>
+  async listAuditEvents(filters: {
+    readonly missionId?: string;
+    readonly robotId?: string;
+  }): Promise<readonly AuditEventV1[]> {
+    return (await this.repository.read()).auditEvents.filter((event) =>
       matchesAuditFilters(event, filters)
     );
   }
@@ -451,9 +487,23 @@ export class FleetPlatformService {
     };
   }
 
-  /** Persists reducer output and streams the reducer-produced event records. */
-  private commitTransition<TResult>(transition: DomainTransition<TResult>): void {
-    this.repository.write(transition.state);
+  /** Applies a reducer transition through the repository update callback. */
+  private async applyTransition<TResult>(
+    reducer: (state: DomainState) => DomainTransition<TResult>
+  ): Promise<DomainTransition<TResult>> {
+    const transition = await this.repository.update((state) => {
+      const nextTransition = reducer(state);
+      return { state: nextTransition.state, result: nextTransition };
+    });
+
+    this.publishTransitionRecords(transition);
+    return transition;
+  }
+
+  /** Streams reducer-produced event records after state has been persisted. */
+  private publishTransitionRecords<TResult>(
+    transition: DomainTransition<TResult>
+  ): void {
     for (const event of transition.domainEvents) {
       this.eventHub.publish("domain", event, event.receivedAt);
       this.logger.info("domain event emitted", {
@@ -476,8 +526,8 @@ export class FleetPlatformService {
   }
 
   /** Redelivers still-dispatched commands when an edge reconnects after the HTTP request. */
-  private deliverPendingCommands(robotId: RobotId): void {
-    const state = this.repository.read();
+  private async deliverPendingCommands(robotId: RobotId): Promise<void> {
+    const state = await this.repository.read();
     for (const command of Object.values(state.commands)) {
       if (command.robotId !== robotId) {
         continue;

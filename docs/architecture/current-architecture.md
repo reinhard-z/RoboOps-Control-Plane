@@ -1,6 +1,6 @@
 # Current Architecture
 
-Snapshot date: 2026-05-15.
+Snapshot date: 2026-05-16.
 
 The important thing to know: the domain/protocol core is implemented, and
 `apps/fleet-platform` now has the first Phase 2 API/gateway slice.
@@ -10,6 +10,8 @@ operator console slice for the incident demo.
 
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
+- `packages/fleet-persistence`: repository contract plus the in-memory
+  `DomainState` implementation used until durable storage is wired in.
 - `packages/test-support`: fake clock/test helpers.
 - Phase 1 tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: in-memory HTTP API, SSE stream, edge WebSocket gateway,
@@ -37,13 +39,16 @@ flowchart LR
     Tests["Phase 1 tests<br/>prove behavior"]
     Domain["fleet-domain<br/>pure reducers"]
     Protocol["fleet-protocol<br/>contracts + schemas"]
-    Api["fleet-platform<br/>HTTP/SSE/WebSocket<br/>in-memory state"]
+    Api["fleet-platform<br/>HTTP/SSE/WebSocket"]
+    Persistence["fleet-persistence<br/>repository contract<br/>in-memory state"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
     UI["operator-ui<br/>local browser console"]
     Tests --> Domain
     Tests --> Protocol
     Domain --> Protocol
+    Api --> Persistence
     Api --> Domain
+    Persistence --> Domain
     Api --> Protocol
     Simulator --> Protocol
     Simulator --> Api
@@ -51,7 +56,6 @@ flowchart LR
   end
 
   subgraph Placeholders["Scaffolded for later phases"]
-    Persistence["fleet-persistence"]
     Worker["event-worker"]
     Observability["observability"]
   end
@@ -72,11 +76,12 @@ flowchart LR
 
   API --> Domain["fleet-domain<br/>business rules"]
   Domain -->|"DomainTransition"| API
-  API --> Store["In-memory state<br/>Phase 2"]
+  API --> Store["fleet-persistence<br/>in-memory repository"]
 
   API -->|"WebSocket<br/>commands"| Edge["Cloud Edge Simulator"]
   Edge -->|"acks, telemetry,<br/>reconnect handshakes"| API
 
+  Store --> Domain
   API --> Protocol["fleet-protocol<br/>validate payloads"]
   Edge --> Protocol
   UI --> Protocol
@@ -167,7 +172,8 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 
 - Continue in `apps/fleet-platform` and `apps/cloud-edge-simulator`; the first
   API/gateway and local edge slices are implemented.
-- Keep a single in-memory `DomainState` behind small repository/service functions.
+- Keep a single in-memory `DomainState` behind the `fleet-persistence`
+  repository contract and Fleet Platform service functions.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
 - Publish reducer-produced `domainEvents` and `auditEvents` to API responses/SSE.

@@ -482,7 +482,7 @@ async function readStreamUntil(
 
 /** Closes the test HTTP server. */
 async function closeRuntime(runtime: FleetPlatformRuntime): Promise<void> {
-  runtime.stop();
+  await runtime.stop();
   await new Promise<void>((resolve, reject) => {
     runtime.server.close((error) => {
       if (error) {
