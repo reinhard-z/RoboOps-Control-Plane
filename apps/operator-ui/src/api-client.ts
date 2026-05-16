@@ -95,13 +95,13 @@ export class FleetPlatformApiClient {
   }
 
   /** Drives the protected demo stale-telemetry fault path. */
-  async markDemoTelemetryStale(): Promise<void> {
-    await this.requestDemoJson("/demo/faults/disconnect");
+  markDemoTelemetryStale(): Promise<unknown> {
+    return this.requestDemoJson("/demo/faults/disconnect");
   }
 
   /** Drives the protected demo reconnect reconciliation path. */
-  async reconnectDemoRobot(): Promise<void> {
-    await this.requestDemoJson("/demo/faults/reconnect");
+  reconnectDemoRobot(): Promise<unknown> {
+    return this.requestDemoJson("/demo/faults/reconnect");
   }
 
   /** Calls one protected demo endpoint with the configured local admin token. */
@@ -134,7 +134,7 @@ export class FleetPlatformApiClient {
       requestInit.body = JSON.stringify(init.body);
     }
 
-    const response = await this.fetchImpl(this.apiUrl(path), requestInit);
+    const response = await this.sendRequest(path, requestInit);
     const text = await response.text();
     const parsedBody = parseJsonResponseBody(text);
     if (!response.ok) {
@@ -147,18 +147,25 @@ export class FleetPlatformApiClient {
       }
 
       const detail = parsedBody.ok
-        ? readApiError(parsedBody.value)
-        : parsedBody.reason;
-      throw new Error(
-        detail
-          ? detail
-          : `Fleet Platform request failed (HTTP ${response.status})`
-      );
+        ? readApiFailureMessage(parsedBody.value)
+        : "Fleet Platform returned an unreadable error response.";
+      throw new Error(detail ?? "Fleet Platform request failed.");
     }
     if (!parsedBody.ok) {
-      throw new Error(parsedBody.reason);
+      throw new Error("Fleet Platform returned an unreadable response.");
     }
     return parsedBody.value as T;
+  }
+
+  /** Wraps fetch failures in copy that is safe to show directly in the console. */
+  private async sendRequest(path: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(this.apiUrl(path), init);
+    } catch {
+      throw new Error(
+        "Fleet Platform API unavailable. Check the API URL and CORS settings."
+      );
+    }
   }
 
   /** Joins API paths without depending on trailing slash configuration. */
@@ -195,8 +202,8 @@ function isRejectedMissionCommandResponse(
   );
 }
 
-/** Extracts Fleet Platform's structured error or command rejection message. */
-function readApiError(body: unknown): string | undefined {
+/** Extracts safe operator copy from structured API errors or command rejections. */
+function readApiFailureMessage(body: unknown): string | undefined {
   const rejectionMessage = readCommandRejectionMessage(body);
   if (rejectionMessage) {
     return rejectionMessage;
@@ -207,9 +214,27 @@ function readApiError(body: unknown): string | undefined {
   }
   const error = body["error"];
   const code = typeof error["code"] === "string" ? error["code"] : "API_ERROR";
-  const message =
-    typeof error["message"] === "string" ? error["message"] : "request failed";
-  return `${code}: ${message}`;
+  return apiErrorMessageForCode(code);
+}
+
+/** Maps backend error codes to concise copy without leaking transport details. */
+function apiErrorMessageForCode(code: string): string {
+  switch (code) {
+    case "DEMO_ADMIN_TOKEN_REQUIRED":
+      return "Demo admin token missing or invalid.";
+    case "DEMO_ENDPOINT_DISABLED":
+      return "Demo controls are disabled on Fleet Platform.";
+    case "MISSION_NOT_FOUND":
+      return "Mission not found in Fleet Platform.";
+    case "PERSISTENCE_NOT_READY":
+      return "Fleet Platform persistence is not ready.";
+    case "ROBOT_NOT_FOUND":
+      return "Robot not found in Fleet Platform.";
+    case "VALIDATION_FAILED":
+      return "Fleet Platform rejected the request body.";
+    default:
+      return "Fleet Platform request failed.";
+  }
 }
 
 /** Reads rejected dispatch responses that intentionally use non-2xx HTTP status. */

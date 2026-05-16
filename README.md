@@ -41,10 +41,12 @@ This starts every workspace app that has a dev script in parallel, including
 the Fleet Platform API, cloud-edge simulator, Operator UI, and event worker.
 The Operator UI is available at `http://127.0.0.1:4020`.
 
-The demo endpoints and UI demo controls are disabled by default. Use the
-per-app commands below when you want to override scenarios or enable the local
-reset/control loop. For that loop, use the same demo token in the Fleet
-Platform and Operator UI terminals.
+The demo endpoints and UI demo controls are disabled by default. A normal local
+demo does not require any secrets: leave `DEMO_MODE`,
+`DEMO_ADMIN_TOKEN`, `OPERATOR_DEMO_MODE`, and `OPERATOR_DEMO_ADMIN_TOKEN`
+unset. Use the per-app commands below when you want to override scenarios or
+enable the local reset/control loop. For that loop, use the same demo token in
+the Fleet Platform and Operator UI terminals.
 
 Terminal 1, start the Fleet Platform API without demo admin endpoints:
 
@@ -136,13 +138,14 @@ Open `http://127.0.0.1:4020`. With demo controls disabled, use **Create
 Mission** to dispatch the default `GO_TO_POSE` command. With demo controls
 enabled, use **Reset State** to clear residual repository state, or **Start
 Clean Mission** to reset and dispatch the normal demo `GO_TO_POSE` in one
-action. The UI disables mission creation while `robot-a` already has active
-work, and blocked/rejected mission rows show the platform reason when one is
-available. Selected mission details show the mission id, active, terminal,
-blocked, and manual-review grouping, command progress, and cancel rejection
-feedback without exposing raw HTTP text in normal operator flows. **Mark
-Stale** and **Reconnect** drive the protected demo fault endpoints when you
-want to demonstrate those paths without restarting every process.
+server-side action. The UI disables mission creation while `robot-a` already
+has active work, and blocked/rejected mission rows show the platform reason
+when one is available. Selected mission details show the mission id, active,
+terminal, blocked, and manual-review grouping, command progress, API
+availability, simulator connection state, and concise action feedback without
+exposing raw HTTP text in normal operator flows. **Mark Stale** and
+**Reconnect** drive the protected demo fault endpoints when you want to
+demonstrate those paths without restarting every process.
 
 The protected demo endpoints are also available over HTTP when Fleet Platform
 is running with `DEMO_MODE=true`:
@@ -153,9 +156,15 @@ curl -s -X POST http://127.0.0.1:4010/demo/scenarios/reset \
 
 curl -s -X POST http://127.0.0.1:4010/demo/scenarios/incident/start \
   -H 'x-demo-admin-token: local-demo-token'
+
+curl -s -X POST http://127.0.0.1:4010/demo/faults/disconnect \
+  -H 'x-demo-admin-token: local-demo-token'
+
+curl -s -X POST http://127.0.0.1:4010/demo/faults/reconnect \
+  -H 'x-demo-admin-token: local-demo-token'
 ```
 
-The same flow is still available over HTTP:
+The normal mission flow is still available over HTTP without demo endpoints:
 
 ```sh
 curl -s http://127.0.0.1:4010/missions \
@@ -181,6 +190,86 @@ For reconnect recovery with the simulator scenario, restart only the simulator
 with `SIM_SCENARIO=reconnect` and start a clean mission. The simulator accepts
 the motion command, disconnects, reconnects with a reconnect handshake, and then
 resumes telemetry.
+
+## Evidence Capture Demo Script
+
+Use these commands when recording public-demo clips from a clean local run.
+
+Terminal 1, Fleet Platform with protected demo controls:
+
+```sh
+DEMO_MODE=true \
+DEMO_ADMIN_TOKEN=local-demo-token \
+CORS_ALLOW_ORIGIN=http://127.0.0.1:4020 \
+pnpm --filter @roboops/fleet-platform dev
+```
+
+Terminal 2, simulator in normal mode:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+ROBOT_ID=robot-a \
+EDGE_AGENT_VERSION=sim-0.1.0 \
+SIM_SCENARIO=normal \
+pnpm --filter @roboops/cloud-edge-simulator dev
+```
+
+Terminal 3, Operator UI with demo controls:
+
+```sh
+FLEET_PLATFORM_URL=http://127.0.0.1:4010 \
+OPERATOR_ROBOT_ID=robot-a \
+OPERATOR_DEMO_MODE=true \
+OPERATOR_DEMO_ADMIN_TOKEN=local-demo-token \
+pnpm --filter @roboops/operator-ui dev
+```
+
+Recording walkthrough:
+
+1. Open `http://127.0.0.1:4020` and confirm the API status shows available.
+2. Click **Reset State** and record the empty mission and event panels.
+3. Click **Start Clean Mission** and record dispatch, edge acknowledgement,
+   running telemetry, map movement, and event feed updates.
+4. Click **Mark Stale** and wait for the robot state to show degraded.
+5. Click **Reconnect** and record reconciliation returning the mission to a
+   recovered running state.
+6. Click **Start Clean Mission** again to prove repeated runs do not keep old
+   mission or idempotency state.
+
+Hosted demo environment:
+
+```sh
+# Fleet Platform
+HOST=0.0.0.0
+PORT=4010
+DEMO_MODE=true
+DEMO_ADMIN_TOKEN=<high-entropy-demo-token>
+CORS_ALLOW_ORIGIN=https://<operator-ui-host>
+
+# Operator UI
+OPERATOR_UI_HOST=0.0.0.0
+OPERATOR_UI_PORT=4020
+FLEET_PLATFORM_URL=https://<fleet-platform-host>
+OPERATOR_ROBOT_ID=robot-a
+OPERATOR_DEMO_MODE=true
+OPERATOR_DEMO_ADMIN_TOKEN=<same-high-entropy-demo-token>
+
+# Simulator
+FLEET_PLATFORM_URL=https://<fleet-platform-host>
+ROBOT_ID=robot-a
+EDGE_AGENT_VERSION=sim-0.1.0
+SIM_SCENARIO=normal
+```
+
+The demo token is a narrow shared bearer for reset and fault controls only. It
+is not user authentication, should not be committed, and should sit behind the
+hosting provider's normal access controls for a public recording environment.
+For local demos, `CORS_ALLOW_ORIGIN=http://127.0.0.1:4020` is the strict
+setting; `*` is acceptable only for throwaway local testing. For hosted demos,
+set `CORS_ALLOW_ORIGIN` to the exact Operator UI origin.
+
+Teardown after recording: stop the Operator UI, simulator, and Fleet Platform
+processes, then remove hosted demo env vars or rotate the demo token.
 
 ## Current Status
 

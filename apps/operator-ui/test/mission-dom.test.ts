@@ -12,6 +12,18 @@ import type { MissionSnapshot } from "../src/types.js";
 import { formatCancelRejectionMessage } from "../src/view-model.js";
 
 describe("operator UI mission DOM rendering", () => {
+  it("renders an explicit empty selected-mission state", () => {
+    const { refs, nodes } = createDetailRefs();
+
+    renderSelectedMissionDetails(refs, undefined);
+
+    expect(nodes.missionId.textContent).toBe("none");
+    expect(nodes.missionState.textContent).toBe("none");
+    expect(nodes.missionStateDetail.textContent).toBe("No mission selected");
+    expect(nodes.missionCommand.textContent).toBe("none");
+    expect(nodes.missionReason.textContent).toBe("none");
+  });
+
   it("renders selected mission identity, state group, and long command values", () => {
     const longMissionId = `mission-${"selected-active-".repeat(8)}`;
     const longCommandId = `cmd-${"cancel-command-".repeat(8)}`;

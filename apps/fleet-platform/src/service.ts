@@ -344,8 +344,9 @@ export class FleetPlatformService {
     return nextState;
   }
 
-  startIncident(context: RequestContext): Promise<MissionCommandServiceResult> {
-    return this.createMission(
+  async startIncident(context: RequestContext): Promise<MissionCommandServiceResult> {
+    await this.resetDemo(context);
+    const result = await this.createMission(
       {
         robotId: this.config.demoRobotId,
         type: "GO_TO_POSE",
@@ -355,6 +356,11 @@ export class FleetPlatformService {
       },
       context
     );
+    this.publishDemoEvent("demo.incident.started", context, {
+      missionId: result.result.mission?.missionId ?? null,
+      status: result.result.status
+    });
+    return result;
   }
 
   async disconnectDemoRobot(context: RequestContext): Promise<unknown> {
@@ -374,7 +380,11 @@ export class FleetPlatformService {
         result: undefined
       };
     });
-    return this.evaluateRobotFreshness(this.config.demoRobotId, context);
+    const result = await this.evaluateRobotFreshness(this.config.demoRobotId, context);
+    this.publishDemoEvent("demo.fault.telemetry_stale", context, {
+      status: readResultStatus(result)
+    });
+    return result;
   }
 
   async reconnectDemoRobot(context: RequestContext): Promise<unknown> {
@@ -384,6 +394,18 @@ export class FleetPlatformService {
       return { status: "UNKNOWN_ROBOT" };
     }
 
+    const activeMission = robot.activeMissionId
+      ? state.missions[robot.activeMissionId]
+      : undefined;
+    const command = activeMission?.currentCommandId
+      ? state.commands[activeMission.currentCommandId]
+      : undefined;
+    if (!activeMission || !command) {
+      const result = { status: "NO_ACTIVE_MISSION" } as const;
+      this.publishDemoEvent("demo.fault.reconnect", context, result);
+      return result;
+    }
+
     const reconnectStart = await this.applyTransition((currentState) =>
       beginReconnect(currentState, {
         robotId: robot.robotId,
@@ -391,17 +413,6 @@ export class FleetPlatformService {
         correlationId: context.correlationId
       })
     );
-
-    const nextState = await this.repository.read();
-    const activeMission = robot.activeMissionId
-      ? nextState.missions[robot.activeMissionId]
-      : undefined;
-    const command = activeMission?.currentCommandId
-      ? nextState.commands[activeMission.currentCommandId]
-      : undefined;
-    if (!activeMission || !command) {
-      return reconnectStart.result;
-    }
 
     const handshake = {
       schemaVersion: protocolSchemaVersions.reconnectHandshake,
@@ -421,11 +432,16 @@ export class FleetPlatformService {
         correlationId: context.correlationId
       })
     );
+    this.publishDemoEvent("demo.fault.reconnect", context, {
+      status: readResultStatus(reconciled.result),
+      reconnectStatus: reconnectStart.result.status,
+      outcome: readReconciliationOutcome(reconciled.result)
+    });
     return reconciled.result;
   }
 
-  duplicateDemoCommand(context: RequestContext): Promise<MissionCommandServiceResult> {
-    return this.createMission(
+  async duplicateDemoCommand(context: RequestContext): Promise<MissionCommandServiceResult> {
+    const result = await this.createMission(
       {
         robotId: this.config.demoRobotId,
         type: "GO_TO_POSE",
@@ -435,6 +451,11 @@ export class FleetPlatformService {
       },
       context
     );
+    this.publishDemoEvent("demo.fault.duplicate_command", context, {
+      missionId: result.result.mission?.missionId ?? null,
+      status: result.result.status
+    });
+    return result;
   }
 
   async lowBatteryDemo(context: RequestContext): Promise<MissionCommandServiceResult> {
@@ -452,7 +473,7 @@ export class FleetPlatformService {
         result: undefined
       };
     });
-    return this.createMission(
+    const result = await this.createMission(
       {
         robotId: this.config.demoRobotId,
         type: "GO_TO_POSE",
@@ -462,6 +483,11 @@ export class FleetPlatformService {
       },
       context
     );
+    this.publishDemoEvent("demo.fault.low_battery", context, {
+      missionId: result.result.mission?.missionId ?? null,
+      status: result.result.status
+    });
+    return result;
   }
 
   getState(): Promise<DomainState> {
@@ -572,6 +598,23 @@ export class FleetPlatformService {
         robotId: event.robotId
       });
     }
+  }
+
+  /** Publishes demo control actions as platform events so recordings have clear markers. */
+  private publishDemoEvent(
+    eventType: string,
+    context: RequestContext,
+    details: Record<string, unknown> = {}
+  ): void {
+    this.eventHub.publish(
+      "platform",
+      {
+        eventType,
+        robotId: this.config.demoRobotId,
+        ...details
+      },
+      context.now
+    );
   }
 
   /** Emits concise incident-story logs for important reducer-produced transitions. */
@@ -719,4 +762,26 @@ function readPayloadString(
     return value;
   }
   return value === null || value === undefined ? undefined : String(value);
+}
+
+/** Reads common result status fields from demo reducer outputs without trusting a concrete shape. */
+function readResultStatus(result: unknown): string | undefined {
+  if (!isRecord(result)) {
+    return undefined;
+  }
+  return typeof result["status"] === "string" ? result["status"] : undefined;
+}
+
+/** Reads reconnect reconciliation outcomes for demo event metadata. */
+function readReconciliationOutcome(result: unknown): string | undefined {
+  if (!isRecord(result) || !isRecord(result["reconciliation"])) {
+    return undefined;
+  }
+  const outcome = result["reconciliation"]["outcome"];
+  return typeof outcome === "string" ? outcome : undefined;
+}
+
+/** Narrows unknown values to records before reading optional demo metadata. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

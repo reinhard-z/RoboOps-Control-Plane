@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { MissionSnapshot, RobotSnapshot } from "../src/types.js";
 import {
+  apiStatusSummary,
+  emptyEventFeedText,
+  emptyMissionListText,
   formatCancelRejectionMessage,
   formatCommandRejectionMessage,
   formatMissionFailureReason,
@@ -10,6 +13,7 @@ import {
   missionStateKind,
   missionStateSummary,
   parsePoseNumber,
+  robotConnectionSummary,
   selectDefaultMission,
   statusToneForMission,
   statusToneForConnection,
@@ -20,12 +24,71 @@ import {
 const now = Date.parse("2026-05-15T12:00:00.000Z");
 
 describe("operator UI view model", () => {
+  it("summarizes API availability without transport internals", () => {
+    expect(apiStatusSummary("CHECKING")).toMatchObject({
+      label: "API checking",
+      tone: "neutral"
+    });
+    expect(apiStatusSummary("AVAILABLE")).toMatchObject({
+      label: "API available",
+      tone: "online"
+    });
+    expect(apiStatusSummary("UNAVAILABLE")).toMatchObject({
+      label: "API unavailable",
+      detail: "Check Fleet Platform, the API URL, and CORS settings",
+      tone: "danger"
+    });
+  });
+
   it("maps robot connection states to distinct tones", () => {
     expect(statusToneForConnection("ONLINE")).toBe("online");
     expect(statusToneForConnection("STALE")).toBe("stale");
     expect(statusToneForConnection("DEGRADED")).toBe("degraded");
     expect(statusToneForConnection("OFFLINE")).toBe("offline");
     expect(statusToneForConnection("RECONNECTING")).toBe("reconnecting");
+  });
+
+  it("summarizes simulator connection states for operator copy", () => {
+    expect(robotConnectionSummary(undefined, now)).toMatchObject({
+      label: "UNKNOWN",
+      detail: "No robot snapshot from Fleet Platform yet",
+      tone: "neutral"
+    });
+    expect(
+      robotConnectionSummary(
+        {
+          robotId: "robot-a",
+          connectionState: "DEGRADED",
+          updatedAt: "2026-05-15T12:00:00.000Z",
+          lastTelemetryReceivedAt: "2026-05-15T11:59:49.000Z",
+          lastSeenCommandSequence: 1
+        },
+        now
+      )
+    ).toMatchObject({
+      label: "DEGRADED",
+      detail: "Simulator disconnected or telemetry stalled",
+      tone: "degraded"
+    });
+    expect(
+      robotConnectionSummary(
+        {
+          robotId: "robot-a",
+          connectionState: "RECONNECTING",
+          updatedAt: "2026-05-15T12:00:00.000Z",
+          lastSeenCommandSequence: 1
+        },
+        now
+      )
+    ).toMatchObject({
+      detail: "Reconnect reconciliation in progress",
+      tone: "reconnecting"
+    });
+  });
+
+  it("uses explicit empty states for mission and event panels", () => {
+    expect(emptyMissionListText()).toBe("No missions yet");
+    expect(emptyEventFeedText()).toBe("No events yet");
   });
 
   it("keeps selected mission stable before falling back to active robot mission", () => {

@@ -74,7 +74,20 @@ describe("operator UI API client", () => {
     });
 
     await expect(api.getRobot("robot-a")).rejects.toThrow(
-      "ROBOT_NOT_FOUND: robot not found"
+      "Robot not found in Fleet Platform."
+    );
+  });
+
+  it("throws a clear API unavailable error without raw fetch text", async () => {
+    const api = new FleetPlatformApiClient({
+      apiBaseUrl: "http://fleet.test",
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed: ECONNREFUSED 127.0.0.1:4010");
+      }
+    });
+
+    await expect(api.listMissions()).rejects.toThrow(
+      "Fleet Platform API unavailable. Check the API URL and CORS settings."
     );
   });
 

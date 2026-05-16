@@ -123,7 +123,9 @@ button:hover:not(:disabled) {
 .topbar-status {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
   color: var(--muted);
   font-size: 14px;
   font-weight: 700;
@@ -142,6 +144,31 @@ button:hover:not(:disabled) {
   height: 10px;
   border-radius: 999px;
   background: var(--offline-text);
+}
+
+.dot.tone-online {
+  background: var(--online-text);
+}
+
+.dot.tone-reconnecting {
+  background: var(--reconnecting-text);
+}
+
+.dot.tone-stale,
+.dot.tone-degraded {
+  background: var(--degraded-text);
+}
+
+.dot.tone-offline {
+  background: var(--offline-text);
+}
+
+.dot.tone-danger {
+  background: var(--danger-text);
+}
+
+.dot.tone-neutral {
+  background: var(--muted);
 }
 
 .console-grid {
@@ -167,6 +194,21 @@ button:hover:not(:disabled) {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.status-stack {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  text-align: right;
+}
+
+.status-stack small {
+  max-width: 190px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .robot-panel,
@@ -641,6 +683,7 @@ dd small {
 
   .topbar-status {
     width: 100%;
+    justify-content: flex-start;
     text-align: left;
   }
 

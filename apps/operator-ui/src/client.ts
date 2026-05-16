@@ -9,6 +9,9 @@ import {
   renderSelectedMissionDetails
 } from "./mission-dom.js";
 import {
+  apiStatusSummary,
+  emptyEventFeedText,
+  emptyMissionListText,
   formatBattery,
   formatCancelRejectionMessage,
   formatCommandRejectionMessage,
@@ -18,10 +21,11 @@ import {
   parsePoseNumber,
   selectDefaultMission,
   sortMissions,
-  statusToneForConnection,
   statusToneForHealth,
+  robotConnectionSummary,
   summarizeStreamEvent,
   telemetryAgeMs,
+  type ApiConnectionState,
   type EventSummary,
   type StatusTone
 } from "./view-model.js";
@@ -56,6 +60,7 @@ interface AppState {
   poseTrail: readonly Pose2D[];
   selectedMissionId: string | undefined;
   events: readonly EventSummary[];
+  apiState: ApiConnectionState;
   streamState: "CONNECTING" | "OPEN" | "RECONNECTING";
   actionMessage: string;
   actionMessageIsError: boolean;
@@ -71,11 +76,14 @@ interface AppState {
 
 /** Cached DOM references for the single-page console. */
 interface ViewRefs {
+  readonly apiDot: HTMLElement;
+  readonly apiStateLabel: HTMLElement;
   readonly apiLabel: HTMLElement;
   readonly streamDot: HTMLElement;
   readonly streamLabel: HTMLElement;
   readonly robotHeading: HTMLElement;
   readonly robotConnection: HTMLElement;
+  readonly robotConnectionDetail: HTMLElement;
   readonly robotHealth: HTMLElement;
   readonly robotBattery: HTMLElement;
   readonly robotTelemetryAge: HTMLElement;
@@ -123,6 +131,7 @@ const state: AppState = {
   poseTrail: [],
   selectedMissionId: undefined,
   events: [],
+  apiState: "CHECKING",
   streamState: "CONNECTING",
   actionMessage: "",
   actionMessageIsError: false,
@@ -139,6 +148,7 @@ void boot();
 async function boot(): Promise<void> {
   refs.apiLabel.textContent = config.apiBaseUrl;
   refs.robotHeading.textContent = config.robotId;
+  renderApiState();
   refs.missionForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void createMission();
@@ -175,6 +185,7 @@ async function refreshSnapshot(): Promise<void> {
       api.listMissions()
     ]);
 
+    state.apiState = "AVAILABLE";
     state.robot = robot;
     state.poseTrail = appendRobotPoseTrail(state.poseTrail, robot.pose);
     state.missions = sortMissions(missions);
@@ -186,6 +197,7 @@ async function refreshSnapshot(): Promise<void> {
     state.selectedMissionId = selected?.missionId;
     render();
   } catch (error) {
+    state.apiState = "UNAVAILABLE";
     state.actionMessage = errorMessage(error);
     state.actionMessageIsError = true;
     render();
@@ -298,7 +310,6 @@ async function startCleanDemoMission(): Promise<void> {
   render();
 
   try {
-    await api.resetDemoState();
     state.events = [];
     state.poseTrail = [];
     state.selectedMissionId = undefined;
@@ -332,8 +343,10 @@ async function triggerDemoStaleTelemetry(): Promise<void> {
   render();
 
   try {
-    await api.markDemoTelemetryStale();
-    state.actionMessage = "Telemetry marked stale";
+    const result = await api.markDemoTelemetryStale();
+    state.actionMessage = demoResultStatus(result) === "UNKNOWN_ROBOT"
+      ? "Demo robot not found"
+      : "Telemetry marked stale";
     await refreshSnapshot();
   } catch (error) {
     state.actionMessage = errorMessage(error);
@@ -352,8 +365,10 @@ async function triggerDemoReconnect(): Promise<void> {
   render();
 
   try {
-    await api.reconnectDemoRobot();
-    state.actionMessage = "Reconnect processed";
+    const result = await api.reconnectDemoRobot();
+    state.actionMessage = demoResultStatus(result) === "NO_ACTIVE_MISSION"
+      ? "No active mission to reconnect"
+      : "Reconnect processed";
     await refreshSnapshot();
   } catch (error) {
     state.actionMessage = errorMessage(error);
@@ -408,6 +423,7 @@ function scheduleRefresh(): void {
 
 /** Renders every visible console region from current state. */
 function render(): void {
+  renderApiState();
   renderStreamState();
   renderRobot();
   renderMissions();
@@ -420,12 +436,9 @@ function render(): void {
 /** Renders robot freshness, health, battery, and agent metadata. */
 function renderRobot(): void {
   const robot = state.robot;
-  const connectionState = robot?.connectionState ?? "UNKNOWN";
-  setStatusPill(
-    refs.robotConnection,
-    connectionState,
-    statusToneForConnection(robot?.connectionState)
-  );
+  const connection = robotConnectionSummary(robot);
+  setStatusPill(refs.robotConnection, connection.label, connection.tone);
+  refs.robotConnectionDetail.textContent = connection.detail;
   setStatusPill(
     refs.robotHealth,
     robot?.health ?? "unknown",
@@ -442,7 +455,7 @@ function renderMissions(): void {
   if (state.missions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.textContent = "No missions";
+    empty.textContent = emptyMissionListText();
     refs.missionList.replaceChildren(empty);
     return;
   }
@@ -514,7 +527,7 @@ function renderEvents(): void {
   if (state.events.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty-state";
-    empty.textContent = "Waiting for events";
+    empty.textContent = emptyEventFeedText();
     refs.eventFeed.replaceChildren(empty);
     return;
   }
@@ -572,6 +585,9 @@ function renderActionState(): void {
 
 /** Updates relative telemetry and event ages without refetching server state. */
 function renderRelativeTimes(): void {
+  refs.robotConnectionDetail.textContent = robotConnectionSummary(
+    state.robot
+  ).detail;
   refs.robotTelemetryAge.textContent = formatRelativeTime(
     state.robot?.lastTelemetryReceivedAt ?? state.robot?.lastTelemetryObservedAt
   );
@@ -584,6 +600,14 @@ function renderRelativeTimes(): void {
   if (state.events.length > 0) {
     renderEvents();
   }
+}
+
+/** Renders Fleet Platform API availability separately from SSE freshness. */
+function renderApiState(): void {
+  const summary = apiStatusSummary(state.apiState);
+  refs.apiStateLabel.textContent = summary.label;
+  refs.apiStateLabel.title = summary.detail;
+  refs.apiDot.className = `dot tone-${summary.tone}`;
 }
 
 /** Renders the SSE connection state separately from robot connection state. */
@@ -656,6 +680,15 @@ function parseStreamEvent(value: string): PlatformStreamEvent | undefined {
   }
 }
 
+/** Reads demo fault result statuses without binding the UI to backend internals. */
+function demoResultStatus(value: unknown): string | undefined {
+  if (!isRecord(value) || !isRecord(value["result"])) {
+    return undefined;
+  }
+  const status = value["result"]["status"];
+  return typeof status === "string" ? status : undefined;
+}
+
 /** Validates the named SSE event types produced by Fleet Platform. */
 function isStreamType(value: unknown): value is PlatformStreamEvent["type"] {
   return value === "domain" || value === "audit" || value === "platform";
@@ -686,11 +719,14 @@ function collectViewRefs(): ViewRefs {
     optionalElement<HTMLButtonElement>("demo-reconnect-button");
 
   return {
+    apiDot: requiredElement("api-dot"),
+    apiStateLabel: requiredElement("api-state-label"),
     apiLabel: requiredElement("api-label"),
     streamDot: requiredElement("stream-dot"),
     streamLabel: requiredElement("stream-label"),
     robotHeading: requiredElement("robot-heading"),
     robotConnection: requiredElement("robot-connection"),
+    robotConnectionDetail: requiredElement("robot-connection-detail"),
     robotHealth: requiredElement("robot-health"),
     robotBattery: requiredElement("robot-battery"),
     robotTelemetryAge: requiredElement("robot-telemetry-age"),

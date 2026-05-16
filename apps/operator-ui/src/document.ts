@@ -27,6 +27,8 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
           <h1>Operator Console</h1>
         </div>
         <div class="topbar-status" aria-live="polite">
+          <span id="api-dot" class="dot tone-neutral"></span>
+          <span id="api-state-label">API checking</span>
           <span id="stream-dot" class="dot tone-neutral"></span>
           <span id="stream-label">Connecting</span>
           <span id="api-label" class="api-label"></span>
@@ -40,7 +42,10 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
               <p class="eyebrow">Robot</p>
               <h2 id="robot-heading">robot-a</h2>
             </div>
-            <span id="robot-connection" class="status-pill tone-neutral">UNKNOWN</span>
+            <div class="status-stack">
+              <span id="robot-connection" class="status-pill tone-neutral">UNKNOWN</span>
+              <small id="robot-connection-detail">No robot snapshot yet</small>
+            </div>
           </div>
           <dl class="metric-grid">
             <div>

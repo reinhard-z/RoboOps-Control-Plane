@@ -19,6 +19,15 @@ export type StatusTone =
   | "neutral"
   | "danger";
 
+export type ApiConnectionState = "CHECKING" | "AVAILABLE" | "UNAVAILABLE";
+
+/** Short status copy for top-level API and stream indicators. */
+export interface StatusSummary {
+  readonly label: string;
+  readonly detail: string;
+  readonly tone: StatusTone;
+}
+
 /** Operator-facing summary produced from raw SSE records. */
 export interface EventSummary {
   readonly id: string;
@@ -27,6 +36,9 @@ export interface EventSummary {
   readonly occurredAt: string;
   readonly tone: StatusTone;
 }
+
+/** Operator-facing robot connection copy shown next to the raw connection state. */
+export type RobotConnectionSummary = StatusSummary;
 
 /** Create-mission button state derived from robot assignment and mission state. */
 export interface MissionCreationAvailability {
@@ -99,6 +111,87 @@ export function statusToneForHealth(
     return "online";
   }
   return "neutral";
+}
+
+/** Converts snapshot refresh state into explicit API availability copy. */
+export function apiStatusSummary(state: ApiConnectionState): StatusSummary {
+  if (state === "AVAILABLE") {
+    return {
+      label: "API available",
+      detail: "Fleet Platform snapshots loaded",
+      tone: "online"
+    };
+  }
+
+  if (state === "UNAVAILABLE") {
+    return {
+      label: "API unavailable",
+      detail: "Check Fleet Platform, the API URL, and CORS settings",
+      tone: "danger"
+    };
+  }
+
+  return {
+    label: "API checking",
+    detail: "Waiting for Fleet Platform",
+    tone: "neutral"
+  };
+}
+
+/** Summarizes simulator connectivity from robot state and telemetry freshness. */
+export function robotConnectionSummary(
+  robot: RobotSnapshot | undefined,
+  nowMs: number = Date.now()
+): RobotConnectionSummary {
+  if (!robot) {
+    return {
+      label: "UNKNOWN",
+      detail: "No robot snapshot from Fleet Platform yet",
+      tone: "neutral"
+    };
+  }
+
+  if (robot.connectionState === "ONLINE") {
+    const age = telemetryAgeMs(robot, nowMs);
+    return {
+      label: robot.connectionState,
+      detail:
+        age !== undefined && age >= 5_000
+          ? "Telemetry is aging; simulator may be paused"
+          : "Simulator telemetry live",
+      tone: "online"
+    };
+  }
+
+  if (robot.connectionState === "RECONNECTING") {
+    return {
+      label: robot.connectionState,
+      detail: "Reconnect reconciliation in progress",
+      tone: "reconnecting"
+    };
+  }
+
+  if (robot.connectionState === "DEGRADED") {
+    return {
+      label: robot.connectionState,
+      detail: "Simulator disconnected or telemetry stalled",
+      tone: "degraded"
+    };
+  }
+
+  if (robot.connectionState === "STALE") {
+    return {
+      label: robot.connectionState,
+      detail: "Telemetry stale; simulator may be paused",
+      tone: "stale"
+    };
+  }
+
+  return {
+    label: robot.connectionState,
+    detail: "Simulator offline",
+    tone: "offline"
+  };
 }
 
 /** Returns true when a mission can still receive telemetry or cancel updates. */
@@ -290,6 +383,16 @@ export function selectDefaultMission(
   }
 
   return sortMissions(missions)[0];
+}
+
+/** Empty-state text for the mission list when no platform missions exist. */
+export function emptyMissionListText(): string {
+  return "No missions yet";
+}
+
+/** Empty-state text for the event feed before the first SSE message arrives. */
+export function emptyEventFeedText(): string {
+  return "No events yet";
 }
 
 /** Formats battery values without implying precision the backend does not provide. */

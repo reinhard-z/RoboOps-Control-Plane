@@ -275,6 +275,13 @@ describe("fleet platform API and edge gateway", () => {
     const missingToken = await postJson(`${baseUrl}/demo/scenarios/reset`, {});
     expect(missingToken.status).toBe(401);
 
+    const wrongToken = await postJson(
+      `${baseUrl}/demo/scenarios/reset`,
+      {},
+      { "X-Demo-Admin-Token": "wrong-token" }
+    );
+    expect(wrongToken.status).toBe(401);
+
     const incident = await postJson(
       `${baseUrl}/demo/scenarios/incident/start`,
       {},
@@ -287,6 +294,19 @@ describe("fleet platform API and edge gateway", () => {
       readonly missions: readonly unknown[];
     };
     expect(missionsBeforeResetBody.missions).toHaveLength(1);
+
+    const repeatedIncident = await postJson(
+      `${baseUrl}/demo/scenarios/incident/start`,
+      {},
+      { "X-Demo-Admin-Token": "local-demo-token" }
+    );
+    expect(repeatedIncident.status).toBe(202);
+
+    const missionsAfterRepeatedStart = await fetch(`${baseUrl}/missions`);
+    const missionsAfterRepeatedStartBody = (await missionsAfterRepeatedStart.json()) as {
+      readonly missions: readonly unknown[];
+    };
+    expect(missionsAfterRepeatedStartBody.missions).toHaveLength(1);
 
     const reset = await postJson(
       `${baseUrl}/demo/scenarios/reset`,
@@ -310,6 +330,82 @@ describe("fleet platform API and edge gateway", () => {
     };
     expect(robotBody.robot.connectionState).toBe("ONLINE");
     expect(robotBody.robot.activeMissionId).toBeUndefined();
+  });
+
+  it("drives demo stale and reconnect faults without leaving residual reconnect state", async () => {
+    await closeRuntime(runtime);
+
+    runtime = createFleetPlatformRuntime({
+      config: {
+        host: "127.0.0.1",
+        port: 0,
+        demoMode: true,
+        demoAdminToken: "local-demo-token",
+        demoRobotId: "robot-a",
+        corsAllowOrigin: "*",
+        defaultCommandTtlMs: 10_000,
+        telemetryFreshnessSweepMs: 50
+      },
+      logger: new SilentStructuredLogger()
+    });
+    await listenFleetPlatform(runtime);
+    const address = runtime.server.address() as AddressInfo;
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const headers = { "X-Demo-Admin-Token": "local-demo-token" };
+    const start = await postJson(
+      `${baseUrl}/demo/scenarios/incident/start`,
+      {},
+      headers
+    );
+    expect(start.status).toBe(202);
+
+    const stale = await postJson(`${baseUrl}/demo/faults/disconnect`, {}, headers);
+    expect(stale.status).toBe(200);
+    expect(stale.body).toMatchObject({
+      result: {
+        status: "UPDATED",
+        robot: { connectionState: "DEGRADED" }
+      }
+    });
+
+    const reconnect = await postJson(`${baseUrl}/demo/faults/reconnect`, {}, headers);
+    expect(reconnect.status).toBe(200);
+    expect(reconnect.body).toMatchObject({
+      result: {
+        status: "PROCESSED",
+        reconciliation: { outcome: "RESUME_RUNNING" },
+        mission: {
+          lifecycleState: "RUNNING",
+          operationalStatus: "RECOVERED"
+        }
+      }
+    });
+
+    const robotAfterReconnect = await fetch(`${baseUrl}/robots/robot-a`);
+    const robotAfterReconnectBody = (await robotAfterReconnect.json()) as {
+      readonly robot: { readonly connectionState: string };
+    };
+    expect(robotAfterReconnectBody.robot.connectionState).toBe("ONLINE");
+
+    const reset = await postJson(`${baseUrl}/demo/scenarios/reset`, {}, headers);
+    expect(reset.status).toBe(200);
+
+    const noActiveMissionReconnect = await postJson(
+      `${baseUrl}/demo/faults/reconnect`,
+      {},
+      headers
+    );
+    expect(noActiveMissionReconnect.status).toBe(200);
+    expect(noActiveMissionReconnect.body).toEqual({
+      result: { status: "NO_ACTIVE_MISSION" }
+    });
+
+    const robotAfterNoopReconnect = await fetch(`${baseUrl}/robots/robot-a`);
+    const robotAfterNoopReconnectBody = (await robotAfterNoopReconnect.json()) as {
+      readonly robot: { readonly connectionState: string };
+    };
+    expect(robotAfterNoopReconnectBody.robot.connectionState).toBe("ONLINE");
   });
 
   it("periodically marks robots degraded when telemetry becomes stale", async () => {
