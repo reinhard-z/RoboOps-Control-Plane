@@ -44,6 +44,22 @@ pnpm test
 pnpm build
 ```
 
+## Local Environment Notes
+
+- The workspace requires Node 22+. If `pnpm` fails with modern JavaScript syntax
+  or regular-expression flag errors, check `node -v`.
+- On this machine, run pnpm with Node 22 when needed:
+
+```sh
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm <command>
+```
+
+- Fleet Platform integration tests bind local HTTP/WebSocket servers on
+  `127.0.0.1`; sandboxed runs may fail with `listen EPERM`. Rerun `pnpm test`
+  with local bind permission when needed.
+- Prefer focused Operator UI tests around extracted view-model or DOM-render
+  helpers before adding browser test dependencies.
+
 ## Documentation
 
 - Update docs when behavior, architecture, local demo flows, or public package
