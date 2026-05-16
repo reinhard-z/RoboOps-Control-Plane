@@ -188,8 +188,177 @@ describe("operator UI view model", () => {
     expect(parsePoseNumber("0", 4.5)).toBe(0);
   });
 
-  it("summarizes SSE records into operator feed rows", () => {
-    const summary = summarizeStreamEvent({
+  it("summarizes mission command progress into operator feed rows", () => {
+    const created = summarizeStreamEvent({
+      streamEventId: "stream-created",
+      type: "audit",
+      occurredAt: "2026-05-15T12:00:00.000Z",
+      data: {
+        action: "mission.command.created",
+        missionId: "mission-a",
+        robotId: "robot-a",
+        commandId: "cmd-a",
+        details: { commandType: "GO_TO_POSE", sequence: 1 }
+      }
+    });
+    const dispatched = summarizeStreamEvent({
+      streamEventId: "stream-dispatched",
+      type: "domain",
+      occurredAt: "2026-05-15T12:00:01.000Z",
+      data: {
+        eventType: "mission.command.dispatched",
+        aggregateType: "mission",
+        aggregateId: "mission-a",
+        payload: { robotId: "robot-a", commandId: "cmd-a", sequence: 1 }
+      }
+    });
+    const acked = summarizeStreamEvent({
+      streamEventId: "stream-acked",
+      type: "audit",
+      occurredAt: "2026-05-15T12:00:02.000Z",
+      data: {
+        action: "mission.command.acked",
+        missionId: "mission-a",
+        robotId: "robot-a",
+        commandId: "cmd-a",
+        details: {
+          commandType: "GO_TO_POSE",
+          lifecycleState: "RUNNING",
+          status: "ACCEPTED",
+          sequence: 1
+        }
+      }
+    });
+    const running = summarizeStreamEvent({
+      streamEventId: "stream-running",
+      type: "domain",
+      occurredAt: "2026-05-15T12:00:03.000Z",
+      data: {
+        eventType: "mission.running",
+        aggregateType: "mission",
+        aggregateId: "mission-a",
+        payload: { robotId: "robot-a" }
+      }
+    });
+
+    expect(created).toMatchObject({
+      title: "Mission command created",
+      detail: "Created · Go To Pose · mission mission-a · robot robot-a · command cmd-a · seq 1",
+      tone: "neutral"
+    });
+    expect(dispatched).toMatchObject({
+      title: "Mission command dispatched",
+      detail: "Sent to edge · mission mission-a · robot robot-a · command cmd-a · seq 1",
+      tone: "online"
+    });
+    expect(acked).toMatchObject({
+      title: "Mission running",
+      detail: "Edge accepted command · Go To Pose · mission mission-a · robot robot-a · command cmd-a · seq 1",
+      tone: "online"
+    });
+    expect(running).toMatchObject({
+      title: "Mission running",
+      detail: "Telemetry confirms active work · mission mission-a · robot robot-a",
+      tone: "online"
+    });
+  });
+
+  it("summarizes cancel and safety-block events with operator reasons", () => {
+    const cancelRequested = summarizeStreamEvent({
+      streamEventId: "stream-cancel",
+      type: "audit",
+      occurredAt: "2026-05-15T12:00:00.000Z",
+      data: {
+        action: "mission.cancel.requested",
+        missionId: "mission-a",
+        robotId: "robot-a",
+        commandId: "cmd-cancel",
+        details: { reason: "operator requested cancel from UI", sequence: 2 }
+      }
+    });
+    const cancelRejected = summarizeStreamEvent({
+      streamEventId: "stream-cancel-rejected",
+      type: "domain",
+      occurredAt: "2026-05-15T12:00:01.000Z",
+      data: {
+        eventType: "mission.cancel.rejected",
+        aggregateType: "mission",
+        aggregateId: "mission-a",
+        payload: { reason: "MISSION_NOT_ACTIVE" }
+      }
+    });
+    const cancelAcked = summarizeStreamEvent({
+      streamEventId: "stream-cancel-acked",
+      type: "audit",
+      occurredAt: "2026-05-15T12:00:02.000Z",
+      data: {
+        action: "mission.command.acked",
+        missionId: "mission-a",
+        robotId: "robot-a",
+        commandId: "cmd-cancel",
+        details: {
+          commandType: "CANCEL_MISSION",
+          lifecycleState: "CANCELLED",
+          status: "ACCEPTED",
+          sequence: 2
+        }
+      }
+    });
+    const safetyBlocked = summarizeStreamEvent({
+      streamEventId: "stream-blocked",
+      type: "domain",
+      occurredAt: "2026-05-15T12:00:02.000Z",
+      data: {
+        eventType: "mission.command.rejected",
+        aggregateType: "mission",
+        aggregateId: "mission-blocked",
+        payload: {
+          robotId: "robot-a",
+          reason: "ROBOT_TELEMETRY_STALE"
+        }
+      }
+    });
+
+    expect(cancelRequested).toMatchObject({
+      title: "Mission cancel requested",
+      detail: "Cancel sent to edge · mission mission-a · robot robot-a · command cmd-cancel · seq 2",
+      tone: "reconnecting"
+    });
+    expect(cancelRejected.title).toBe("Mission cancel rejected");
+    expect(cancelRejected.detail).toContain(
+      "reason: The selected mission is no longer active"
+    );
+    expect(cancelRejected.tone).toBe("danger");
+    expect(cancelAcked).toMatchObject({
+      title: "Mission cancelled",
+      detail: "Cancellation accepted by edge · Cancel Mission · mission mission-a · robot robot-a · command cmd-cancel · seq 2",
+      tone: "offline"
+    });
+    expect(safetyBlocked).toMatchObject({
+      title: "Mission safety blocked",
+      detail: "Blocked before dispatch · mission mission-blocked · robot robot-a · reason: The robot telemetry is stale",
+      tone: "degraded"
+    });
+  });
+
+  it("summarizes telemetry, edge, and reconnect reconciliation events", () => {
+    const telemetry = summarizeStreamEvent({
+      streamEventId: "stream-telemetry",
+      type: "domain",
+      occurredAt: "2026-05-15T12:00:00.000Z",
+      data: {
+        eventType: "robot.telemetry.received",
+        aggregateType: "robot",
+        aggregateId: "robot-a",
+        payload: {
+          batteryPercent: 74.4,
+          connectionState: "ONLINE",
+          currentMissionId: "mission-a"
+        },
+        details: { health: "OK" }
+      }
+    });
+    const degraded = summarizeStreamEvent({
       streamEventId: "stream-1",
       type: "domain",
       occurredAt: "2026-05-15T12:00:00.000Z",
@@ -202,11 +371,141 @@ describe("operator UI view model", () => {
         }
       }
     });
+    const edgeDisconnected = summarizeStreamEvent({
+      streamEventId: "stream-edge",
+      type: "platform",
+      occurredAt: "2026-05-15T12:00:01.000Z",
+      data: {
+        eventType: "edge.disconnected",
+        robotId: "robot-a"
+      }
+    });
+    const reconnectStarted = summarizeStreamEvent({
+      streamEventId: "stream-reconnect",
+      type: "audit",
+      occurredAt: "2026-05-15T12:00:02.000Z",
+      data: {
+        action: "robot.reconnect.started",
+        missionId: "mission-a",
+        robotId: "robot-a",
+        details: { previousConnectionState: "DEGRADED" }
+      }
+    });
+    const recovered = summarizeStreamEvent({
+      streamEventId: "stream-recovered",
+      type: "domain",
+      occurredAt: "2026-05-15T12:00:03.000Z",
+      data: {
+        eventType: "mission.reconciliation.completed",
+        aggregateType: "mission",
+        aggregateId: "mission-a",
+        payload: {
+          outcome: "RESUME_RUNNING",
+          reason: "cloud and robot mission state match",
+          robotId: "robot-a"
+        }
+      }
+    });
+    const manualReview = summarizeStreamEvent({
+      streamEventId: "stream-review",
+      type: "audit",
+      occurredAt: "2026-05-15T12:00:04.000Z",
+      data: {
+        action: "mission.reconciliation.completed",
+        missionId: "mission-a",
+        robotId: "robot-a",
+        details: {
+          outcome: "MANUAL_REVIEW",
+          reason: "reconnect handshake has an unexplained command sequence gap",
+          lastSeenCommandSequence: 7
+        }
+      }
+    });
 
-    expect(summary.title).toBe("robot.connection.freshness_changed");
-    expect(summary.detail).toContain("robot-a");
-    expect(summary.detail).toContain("DEGRADED");
-    expect(summary.tone).toBe("degraded");
+    expect(telemetry).toMatchObject({
+      title: "Robot telemetry received",
+      detail: "robot robot-a · ONLINE · health OK · battery 74% · mission mission-a",
+      tone: "online"
+    });
+    expect(degraded).toMatchObject({
+      title: "Robot telemetry degraded",
+      detail: "robot robot-a · STALE -> DEGRADED",
+      tone: "degraded"
+    });
+    expect(edgeDisconnected).toMatchObject({
+      title: "Edge disconnected",
+      detail: "Reconnect reconciliation will start · robot robot-a",
+      tone: "reconnecting"
+    });
+    expect(reconnectStarted).toMatchObject({
+      title: "Reconnect reconciliation started",
+      detail: "Cloud is comparing robot and mission state · robot robot-a · mission mission-a · previous DEGRADED",
+      tone: "reconnecting"
+    });
+    expect(recovered.title).toBe("Reconnect reconciled, mission recovered");
+    expect(recovered.detail).toContain(
+      "reason: cloud and robot mission state match"
+    );
+    expect(manualReview).toMatchObject({
+      title: "Reconnect needs manual review",
+      tone: "danger"
+    });
+    expect(manualReview.detail).toContain("Manual review required");
+    expect(manualReview.detail).toContain("seq 7");
+  });
+
+  it("summarizes demo events and keeps unknown events compact", () => {
+    const reset = summarizeStreamEvent({
+      streamEventId: "stream-reset",
+      type: "platform",
+      occurredAt: "2026-05-15T12:00:00.000Z",
+      data: {
+        eventType: "demo.reset",
+        robotId: "robot-a"
+      }
+    });
+    const fault = summarizeStreamEvent({
+      streamEventId: "stream-fault",
+      type: "platform",
+      occurredAt: "2026-05-15T12:00:01.000Z",
+      data: {
+        eventType: "demo.fault.reconnect",
+        robotId: "robot-a"
+      }
+    });
+    const unknown = summarizeStreamEvent({
+      streamEventId: "stream-unknown",
+      type: "domain",
+      occurredAt: "2026-05-15T12:00:02.000Z",
+      data: {
+        eventType: "vendor.custom_event",
+        aggregateType: "mission",
+        aggregateId: "mission-with-a-very-long-id-that-should-wrap",
+        payload: {
+          reason:
+            "operator visible reason that should be summarized without exposing nested raw payloads",
+          nested: { thisShouldNotRenderAsJson: true }
+        }
+      }
+    });
+
+    expect(reset).toMatchObject({
+      title: "Demo state reset",
+      detail: "Demo baseline restored · robot robot-a",
+      tone: "neutral"
+    });
+    expect(fault).toMatchObject({
+      title: "Demo fault: reconnect",
+      detail: "Reconnect path injected · robot robot-a",
+      tone: "reconnecting"
+    });
+    expect(unknown.title).toBe("Vendor custom event");
+    expect(unknown.detail).toContain(
+      "mission mission-with-a-very-long-id-that-should-wrap"
+    );
+    expect(unknown.detail).toContain("reason: operator visible reason");
+    expect(unknown.detail).not.toContain("{");
+    expect(unknown.detail).not.toContain("thisShouldNotRenderAsJson");
   });
 });
 

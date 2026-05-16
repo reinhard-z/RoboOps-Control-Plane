@@ -158,6 +158,8 @@ export function applyCommandAck(
     causationId: ack.causationId,
     payload: {
       status: ack.status,
+      commandType: command.type,
+      lifecycleState: nextMission.lifecycleState,
       missionId: nextMission.missionId,
       robotId: ack.robotId,
       sequence: ack.lastSeenCommandSequence,
@@ -176,6 +178,8 @@ export function applyCommandAck(
     causationId: ack.causationId,
     details: {
       status: ack.status,
+      commandType: command.type,
+      lifecycleState: nextMission.lifecycleState,
       sequence: ack.lastSeenCommandSequence,
     },
   });

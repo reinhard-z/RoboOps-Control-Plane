@@ -22,10 +22,11 @@ import {
   getRobot,
   ingestRobotTelemetry,
   processReconnectHandshake,
+  requestMissionCancellation,
   upsertRobotSnapshot
 } from "../src/index.js";
 
-describe("phase 1 domain incident path", () => {
+describe("domain incident path", () => {
   it("runs the normal command -> ack -> running path without API or storage", () => {
     const clock = new FakeClock();
     let state = seedOnlineRobot(createInitialDomainState(), clock);
@@ -89,6 +90,51 @@ describe("phase 1 domain incident path", () => {
     }
     expect(blocked.result.reason).toBe("ROBOT_TELEMETRY_STALE");
     expect(blocked.result.mission?.lifecycleState).toBe("SAFETY_BLOCKED");
+  });
+
+  it("records command type and resulting lifecycle on cancel acknowledgements", () => {
+    const { clock, command, state } = runningMission();
+    const issuedAt = clock.advanceSeconds(1);
+    const cancel = requestMissionCancellation(state, {
+      commandId: "cmd-cancel-001",
+      missionId: command.missionId,
+      idempotencyKey: "operator:test:mission-test-001:cancel",
+      issuedAt,
+      expiresAt: isoPlus(issuedAt, 10_000),
+      correlationId: "corr-cancel-001",
+      causationId: "evt-cancel-001",
+      reason: "operator test cancel",
+      now: issuedAt
+    });
+    expect(cancel.result.status).toBe("ACCEPTED");
+    if (cancel.result.status !== "ACCEPTED") {
+      throw new Error("expected accepted cancel");
+    }
+
+    const ack = applyCommandAck(
+      cancel.state,
+      commandAck(cancel.result.command, clock.advanceSeconds(1))
+    );
+    expect(ack.result.status).toBe("PROCESSED");
+    if (ack.result.status !== "PROCESSED") {
+      throw new Error("expected processed cancel ack");
+    }
+
+    const ackEvent = ack.domainEvents.find(
+      (event) => event.eventType === "mission.command.acked"
+    );
+    const ackAudit = ack.auditEvents.find(
+      (event) => event.action === "mission.command.acked"
+    );
+    expect(ack.result.mission.lifecycleState).toBe("CANCELLED");
+    expect(ackEvent?.payload).toMatchObject({
+      commandType: "CANCEL_MISSION",
+      lifecycleState: "CANCELLED"
+    });
+    expect(ackAudit?.details).toMatchObject({
+      commandType: "CANCEL_MISSION",
+      lifecycleState: "CANCELLED"
+    });
   });
 
   it("handles duplicate operator requests deterministically", () => {

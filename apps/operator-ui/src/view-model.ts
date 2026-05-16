@@ -355,67 +355,679 @@ export function parsePoseNumber(value: string, fallback: number): number {
 /** Converts a raw stream envelope into one concise feed row. */
 export function summarizeStreamEvent(event: PlatformStreamEvent): EventSummary {
   const data = asRecord(event.data);
-  const title =
-    readString(data, "eventType") ??
-    readString(data, "action") ??
-    `${event.type}.event`;
+  const context = createEventSummaryContext(event.type, data);
+  const summary = summarizeKnownEvent(context) ?? summarizeUnknownEvent(context);
 
   return {
     id: event.streamEventId,
-    title,
-    detail: buildEventDetail(event.type, data),
+    title: summary.title,
+    detail: summary.detail,
     occurredAt: event.occurredAt,
-    tone: toneForEvent(title, data)
+    tone: summary.tone
   };
 }
 
-/** Builds a terse detail string from common event and audit fields. */
-function buildEventDetail(
-  streamType: PlatformStreamEvent["type"],
-  data: Record<string, unknown>
-): string {
-  const fragments = [
-    streamType,
-    readString(data, "robotId"),
-    readString(data, "missionId"),
-    readString(data, "commandId"),
-    readString(data, "aggregateId")
-  ];
-
-  const payload = asRecord(data["payload"]);
-  const details = asRecord(data["details"]);
-  const semanticFragments = [
-    readString(payload, "connectionState"),
-    readString(payload, "previousConnectionState"),
-    readString(payload, "outcome"),
-    readString(payload, "reason"),
-    readString(details, "connectionState"),
-    readString(details, "outcome"),
-    readString(details, "reason")
-  ];
-
-  return [...fragments, ...semanticFragments].filter(Boolean).join(" · ");
+/** Parsed event fields used by feed copy without depending on one raw payload shape. */
+interface EventSummaryContext {
+  readonly streamType: PlatformStreamEvent["type"];
+  readonly name: string;
+  readonly aggregateType: string | undefined;
+  readonly aggregateId: string | undefined;
+  readonly missionId: string | undefined;
+  readonly robotId: string | undefined;
+  readonly commandId: string | undefined;
+  readonly edgeSessionId: string | undefined;
+  readonly reason: string | undefined;
+  readonly outcome: string | undefined;
+  readonly status: string | undefined;
+  readonly lifecycleState: string | undefined;
+  readonly connectionState: string | undefined;
+  readonly previousConnectionState: string | undefined;
+  readonly health: string | undefined;
+  readonly commandType: string | undefined;
+  readonly sequence: number | undefined;
+  readonly lastSeenCommandSequence: number | undefined;
+  readonly batteryPercent: number | undefined;
 }
 
-/** Chooses an event tone that makes degraded and reconnect paths stand out. */
-function toneForEvent(
-  title: string,
+/** Feed row copy before the SSE envelope id and timestamp are applied. */
+type EventSummaryCopy = Pick<EventSummary, "title" | "detail" | "tone">;
+
+/** Collects common ids and semantic fields from domain, audit, and platform events. */
+function createEventSummaryContext(
+  streamType: PlatformStreamEvent["type"],
   data: Record<string, unknown>
-): StatusTone {
-  const text = `${title} ${JSON.stringify(data)}`.toLowerCase();
-  if (text.includes("reconnect") || text.includes("reconcil")) {
-    return "reconnecting";
+): EventSummaryContext {
+  const payload = asRecord(data["payload"]);
+  const details = asRecord(data["details"]);
+  const aggregateType = readString(data, "aggregateType");
+  const aggregateId = readString(data, "aggregateId");
+  const name =
+    readString(data, "eventType") ??
+    readString(data, "action") ??
+    `${streamType}.event`;
+  const inferredMissionAggregate =
+    aggregateType === "mission" || (!aggregateType && name.startsWith("mission."));
+  const inferredRobotAggregate =
+    aggregateType === "robot" || (!aggregateType && name.startsWith("robot."));
+  const inferredCommandAggregate =
+    aggregateType === "command" || (!aggregateType && name.startsWith("command."));
+
+  const missionId =
+    readString(data, "missionId") ??
+    readString(payload, "missionId") ??
+    readString(payload, "currentMissionId") ??
+    readString(details, "missionId") ??
+    (inferredMissionAggregate ? aggregateId : undefined);
+  const robotId =
+    readString(data, "robotId") ??
+    readString(payload, "robotId") ??
+    readString(details, "robotId") ??
+    (inferredRobotAggregate ? aggregateId : undefined);
+  const commandId =
+    readString(data, "commandId") ??
+    readString(payload, "commandId") ??
+    readString(details, "commandId") ??
+    (inferredCommandAggregate ? aggregateId : undefined);
+
+  return {
+    streamType,
+    name,
+    aggregateType,
+    aggregateId,
+    missionId,
+    robotId,
+    commandId,
+    edgeSessionId:
+      readString(data, "edgeSessionId") ??
+      readString(payload, "edgeSessionId") ??
+      readString(details, "edgeSessionId"),
+    reason:
+      readString(payload, "reason") ??
+      readString(details, "reason") ??
+      readString(data, "reason"),
+    outcome: readString(payload, "outcome") ?? readString(details, "outcome"),
+    status: readString(payload, "status") ?? readString(details, "status"),
+    lifecycleState:
+      readString(payload, "lifecycleState") ??
+      readString(payload, "nextLifecycleState") ??
+      readString(details, "lifecycleState") ??
+      readString(details, "nextLifecycleState"),
+    connectionState:
+      readString(payload, "connectionState") ??
+      readString(details, "connectionState"),
+    previousConnectionState:
+      readString(payload, "previousConnectionState") ??
+      readString(details, "previousConnectionState"),
+    health: readString(payload, "health") ?? readString(details, "health"),
+    commandType:
+      readString(payload, "commandType") ?? readString(details, "commandType"),
+    sequence: readNumber(payload, "sequence") ?? readNumber(details, "sequence"),
+    lastSeenCommandSequence:
+      readNumber(payload, "lastSeenCommandSequence") ??
+      readNumber(details, "lastSeenCommandSequence"),
+    batteryPercent:
+      readNumber(payload, "batteryPercent") ??
+      readNumber(details, "batteryPercent")
+  };
+}
+
+/** Returns intentional operator copy for the event types that make up the demo incident. */
+function summarizeKnownEvent(
+  context: EventSummaryContext
+): EventSummaryCopy | undefined {
+  switch (context.name) {
+    case "stream.ready":
+      return {
+        title: "Event stream connected",
+        detail: "Live Fleet Platform updates are connected",
+        tone: "online"
+      };
+    case "mission.command.created":
+      return {
+        title: "Mission command created",
+        detail: commandDetail(context, "Created"),
+        tone: "neutral"
+      };
+    case "mission.command.dispatched":
+      return {
+        title: "Mission command dispatched",
+        detail: commandDetail(context, "Sent to edge"),
+        tone: "online"
+      };
+    case "mission.command.acked":
+      return commandAckSummary(context);
+    case "mission.command.timeout":
+      return {
+        title: "Mission command timed out",
+        detail: commandDetail(context, "Expired before acknowledgement"),
+        tone: "danger"
+      };
+    case "mission.command.rejected":
+      return missionRejectedSummary(context);
+    case "mission.running":
+    case "mission.lifecycle.running":
+      return {
+        title: "Mission running",
+        detail: missionDetail(context, "Telemetry confirms active work"),
+        tone: "online"
+      };
+    case "mission.cancel.requested":
+      return {
+        title: "Mission cancel requested",
+        detail: commandDetail(context, "Cancel sent to edge"),
+        tone: "reconnecting"
+      };
+    case "mission.cancel.acked":
+    case "mission.cancelled":
+    case "mission.cancel.completed":
+      return {
+        title: "Mission cancelled",
+        detail: commandDetail(context, "Cancellation accepted by edge"),
+        tone: "offline"
+      };
+    case "mission.cancel.rejected":
+      return {
+        title: "Mission cancel rejected",
+        detail: reasonDetail(
+          context,
+          "Cancel rejected",
+          context.reason
+            ? formatCancelRejectionReason(context.reason)
+            : undefined
+        ),
+        tone: "danger"
+      };
+    case "robot.telemetry.received":
+      return {
+        title: "Robot telemetry received",
+        detail: telemetryDetail(context),
+        tone: toneForConnectionName(context.connectionState)
+      };
+    case "robot.connection.freshness_changed":
+      return robotFreshnessSummary(context);
+    case "edge.connected":
+      return {
+        title: "Edge connected",
+        detail: edgeDetail(context, "Robot edge session is online"),
+        tone: "online"
+      };
+    case "edge.disconnected":
+      return {
+        title: "Edge disconnected",
+        detail: edgeDetail(context, "Reconnect reconciliation will start"),
+        tone: "reconnecting"
+      };
+    case "edge.reconnected":
+      return {
+        title: "Edge reconnected",
+        detail: edgeDetail(context, "Robot edge session returned"),
+        tone: "online"
+      };
+    case "robot.reconnect.started":
+    case "mission.reconciliation.started":
+      return {
+        title: "Reconnect reconciliation started",
+        detail: reconnectStartDetail(context),
+        tone: "reconnecting"
+      };
+    case "mission.reconciliation.completed":
+      return reconciliationCompletedSummary(context);
+    case "demo.reset":
+    case "demo.scenario.reset":
+      return {
+        title: "Demo state reset",
+        detail: robotDetail(context, "Demo baseline restored"),
+        tone: "neutral"
+      };
+    case "demo.incident.start":
+    case "demo.incident.started":
+      return {
+        title: "Demo incident started",
+        detail: robotDetail(context, "Clean mission path started"),
+        tone: "online"
+      };
+    case "demo.fault.disconnect":
+    case "demo.fault.stale_telemetry":
+    case "demo.fault.telemetry_stale":
+      return {
+        title: "Demo fault: telemetry stale",
+        detail: robotDetail(context, "Telemetry freshness fault injected"),
+        tone: "degraded"
+      };
+    case "demo.fault.reconnect":
+      return {
+        title: "Demo fault: reconnect",
+        detail: robotDetail(context, "Reconnect path injected"),
+        tone: "reconnecting"
+      };
+    case "demo.fault.low_battery":
+      return {
+        title: "Demo fault: low battery",
+        detail: robotDetail(context, "Low-battery safety block injected"),
+        tone: "degraded"
+      };
+    case "demo.fault.duplicate_command":
+      return {
+        title: "Demo fault: duplicate command",
+        detail: robotDetail(context, "Duplicate command path injected"),
+        tone: "neutral"
+      };
+    default:
+      return undefined;
   }
-  if (text.includes("offline") || text.includes("failed") || text.includes("reject")) {
+}
+
+/** Builds compact fallback copy for new event types without dumping raw payloads. */
+function summarizeUnknownEvent(
+  context: EventSummaryContext
+): EventSummaryCopy {
+  return {
+    title: humanizeEventName(context.name),
+    detail: fallbackDetail(context),
+    tone: inferTone(context)
+  };
+}
+
+/** Describes command-oriented events using mission, robot, command, and sequence. */
+function commandDetail(context: EventSummaryContext, prefix: string): string {
+  return joinDetail([
+    prefix,
+    context.commandType ? humanizeReasonCode(context.commandType) : undefined,
+    idFragment("mission", context.missionId),
+    idFragment("robot", context.robotId),
+    idFragment("command", context.commandId),
+    sequenceFragment(context)
+  ]);
+}
+
+/** Summarizes edge command acks, including cancel acks that terminate the mission. */
+function commandAckSummary(context: EventSummaryContext): EventSummaryCopy {
+  if (
+    context.commandType === "CANCEL_MISSION" &&
+    (context.lifecycleState === "CANCELLED" ||
+      context.status === "ACCEPTED" ||
+      context.status === "DUPLICATE")
+  ) {
+    return {
+      title: "Mission cancelled",
+      detail: commandDetail(context, "Cancellation accepted by edge"),
+      tone: "offline"
+    };
+  }
+
+  if (context.commandType === "CANCEL_MISSION" && context.status === "REJECTED") {
+    return {
+      title: "Mission cancel rejected",
+      detail: commandAckDetail(context),
+      tone: "danger"
+    };
+  }
+
+  if (context.lifecycleState === "RUNNING") {
+    return {
+      title: "Mission running",
+      detail: commandDetail(context, "Edge accepted command"),
+      tone: "online"
+    };
+  }
+
+  return {
+    title: "Edge acknowledged mission command",
+    detail: commandAckDetail(context),
+    tone: toneForAckStatus(context.status)
+  };
+}
+
+/** Explains edge acknowledgements while keeping ACK status visible but readable. */
+function commandAckDetail(context: EventSummaryContext): string {
+  const status = context.status
+    ? `edge ${humanizeReasonCode(context.status).toLowerCase()}`
+    : "edge acknowledged";
+  const reason = context.reason
+    ? `reason: ${formatReasonText(context.reason)}`
+    : undefined;
+  return joinDetail([
+    status,
+    idFragment("mission", context.missionId),
+    idFragment("robot", context.robotId),
+    idFragment("command", context.commandId),
+    sequenceFragment(context),
+    reason
+  ]);
+}
+
+/** Creates the rejected/blocked mission wording using domain safety reason codes. */
+function missionRejectedSummary(
+  context: EventSummaryContext
+): EventSummaryCopy {
+  const safetyBlocked = context.reason
+    ? isSafetyBlockReason(context.reason)
+    : false;
+  const reason = context.reason
+    ? formatRejectionReason(context.reason)
+    : undefined;
+
+  return {
+    title: safetyBlocked ? "Mission safety blocked" : "Mission rejected",
+    detail: reasonDetail(
+      context,
+      safetyBlocked ? "Blocked before dispatch" : "Rejected before dispatch",
+      reason
+    ),
+    tone: safetyBlocked ? "degraded" : "danger"
+  };
+}
+
+/** Shows a mission-scoped detail line with ids first and the operator reason last. */
+function reasonDetail(
+  context: EventSummaryContext,
+  prefix: string,
+  reason: string | undefined
+): string {
+  return joinDetail([
+    prefix,
+    idFragment("mission", context.missionId),
+    idFragment("robot", context.robotId),
+    idFragment("command", context.commandId),
+    reason ? `reason: ${truncateDetail(reason)}` : undefined
+  ]);
+}
+
+/** Summarizes telemetry heartbeats with connection, health, battery, and active mission. */
+function telemetryDetail(context: EventSummaryContext): string {
+  return joinDetail([
+    idFragment("robot", context.robotId),
+    context.connectionState,
+    context.health ? `health ${context.health}` : undefined,
+    context.batteryPercent !== undefined
+      ? `battery ${Math.round(context.batteryPercent)}%`
+      : undefined,
+    idFragment("mission", context.missionId)
+  ]);
+}
+
+/** Explains freshness transitions as state changes instead of raw event names. */
+function robotFreshnessSummary(
+  context: EventSummaryContext
+): EventSummaryCopy {
+  const connectionState = context.connectionState;
+  const title = connectionState === "ONLINE"
+    ? "Robot telemetry recovered"
+    : connectionState === "STALE"
+      ? "Robot telemetry stale"
+      : connectionState === "DEGRADED"
+        ? "Robot telemetry degraded"
+        : connectionState === "OFFLINE"
+          ? "Robot offline"
+          : "Robot connection changed";
+
+  return {
+    title,
+    detail: joinDetail([
+      idFragment("robot", context.robotId),
+      stateTransition(context.previousConnectionState, context.connectionState),
+      idFragment("mission", context.missionId)
+    ]),
+    tone: toneForConnectionName(connectionState)
+  };
+}
+
+/** Keeps edge connection events short while retaining session ids when present. */
+function edgeDetail(context: EventSummaryContext, prefix: string): string {
+  return joinDetail([
+    prefix,
+    idFragment("robot", context.robotId),
+    idFragment("session", context.edgeSessionId)
+  ]);
+}
+
+/** Explains that reconnect is active and which previous state led into it. */
+function reconnectStartDetail(context: EventSummaryContext): string {
+  return joinDetail([
+    "Cloud is comparing robot and mission state",
+    idFragment("robot", context.robotId),
+    idFragment("mission", context.missionId),
+    context.previousConnectionState
+      ? `previous ${context.previousConnectionState}`
+      : undefined
+  ]);
+}
+
+/** Converts reconciliation outcomes into recovered/manual-review incident copy. */
+function reconciliationCompletedSummary(
+  context: EventSummaryContext
+): EventSummaryCopy {
+  if (context.outcome === "MANUAL_REVIEW") {
+    return {
+      title: "Reconnect needs manual review",
+      detail: reconciliationDetail(context, "Manual review required"),
+      tone: "danger"
+    };
+  }
+
+  if (context.outcome === "MARK_FAILED") {
+    return {
+      title: "Reconnect reconciled, mission failed",
+      detail: reconciliationDetail(context, "Mission marked failed"),
+      tone: "danger"
+    };
+  }
+
+  if (context.outcome === "MARK_SUCCEEDED") {
+    return {
+      title: "Reconnect reconciled, mission succeeded",
+      detail: reconciliationDetail(context, "Mission marked succeeded"),
+      tone: "online"
+    };
+  }
+
+  return {
+    title: "Reconnect reconciled, mission recovered",
+    detail: reconciliationDetail(context, "Mission can continue"),
+    tone: "online"
+  };
+}
+
+/** Renders reconciliation ids, sequence, and decision reason without raw JSON. */
+function reconciliationDetail(context: EventSummaryContext, prefix: string): string {
+  return joinDetail([
+    prefix,
+    idFragment("mission", context.missionId),
+    idFragment("robot", context.robotId),
+    context.outcome ? humanizeReasonCode(context.outcome) : undefined,
+    sequenceFragment(context),
+    context.reason ? `reason: ${formatReasonText(context.reason)}` : undefined
+  ]);
+}
+
+/** Reuses robot id copy for demo actions where no mission exists yet. */
+function robotDetail(context: EventSummaryContext, prefix: string): string {
+  return joinDetail([prefix, idFragment("robot", context.robotId)]);
+}
+
+/** Describes mission progress events that may not have command ids. */
+function missionDetail(context: EventSummaryContext, prefix: string): string {
+  return joinDetail([
+    prefix,
+    idFragment("mission", context.missionId),
+    idFragment("robot", context.robotId)
+  ]);
+}
+
+/** Builds an unknown-event detail from safe scalar fields only. */
+function fallbackDetail(context: EventSummaryContext): string {
+  return joinDetail([
+    sourceLabel(context.streamType),
+    idFragment("robot", context.robotId),
+    idFragment("mission", context.missionId),
+    idFragment("command", context.commandId),
+    context.aggregateId &&
+    context.aggregateId !== context.robotId &&
+    context.aggregateId !== context.missionId &&
+    context.aggregateId !== context.commandId
+      ? idFragment(context.aggregateType ?? "aggregate", context.aggregateId)
+      : undefined,
+    stateTransition(context.previousConnectionState, context.connectionState),
+    context.status ? `status ${humanizeReasonCode(context.status)}` : undefined,
+    context.outcome ? humanizeReasonCode(context.outcome) : undefined,
+    sequenceFragment(context),
+    context.reason ? `reason: ${formatReasonText(context.reason)}` : undefined
+  ]);
+}
+
+/** Infers a conservative tone for unknown events from semantic fields, not raw JSON. */
+function inferTone(context: EventSummaryContext): StatusTone {
+  const connectionTone = toneForConnectionName(context.connectionState);
+  if (connectionTone !== "neutral") {
+    return connectionTone;
+  }
+
+  if (context.outcome === "MANUAL_REVIEW" || context.outcome === "MARK_FAILED") {
     return "danger";
   }
-  if (text.includes("degraded") || text.includes("stale") || text.includes("warn")) {
+  if (context.outcome) {
+    return "online";
+  }
+  if (context.status) {
+    return toneForAckStatus(context.status);
+  }
+  if (context.reason) {
+    return isSafetyBlockReason(context.reason) ? "degraded" : "danger";
+  }
+  if (context.name.includes("reconnect") || context.name.includes("reconcil")) {
+    return "reconnecting";
+  }
+  if (context.name.includes("offline") || context.name.includes("failed")) {
+    return "danger";
+  }
+  if (context.name.includes("degraded") || context.name.includes("stale")) {
     return "degraded";
   }
-  if (text.includes("online") || text.includes("acked") || text.includes("received")) {
+  if (context.name.includes("online") || context.name.includes("received")) {
     return "online";
   }
   return "neutral";
+}
+
+/** Joins detail fragments with the UI's compact separator and a stable empty fallback. */
+function joinDetail(fragments: ReadonlyArray<string | undefined>): string {
+  const detail = fragments
+    .filter((fragment): fragment is string => Boolean(fragment))
+    .join(" · ");
+  return detail.length > 0 ? detail : "No additional details";
+}
+
+/** Formats labeled ids consistently while allowing long values to wrap in CSS. */
+function idFragment(label: string, value: string | undefined): string | undefined {
+  return value ? `${label} ${value}` : undefined;
+}
+
+/** Formats command sequence values while preserving zero. */
+function sequenceFragment(context: EventSummaryContext): string | undefined {
+  const sequence = context.sequence ?? context.lastSeenCommandSequence;
+  return sequence === undefined ? undefined : `seq ${sequence}`;
+}
+
+/** Formats connection transitions as compact "old -> new" copy. */
+function stateTransition(
+  previous: string | undefined,
+  next: string | undefined
+): string | undefined {
+  if (previous && next) {
+    return `${previous} -> ${next}`;
+  }
+  return next;
+}
+
+/** Names the stream source without exposing raw JSON. */
+function sourceLabel(streamType: PlatformStreamEvent["type"]): string {
+  if (streamType === "domain") {
+    return "Domain event";
+  }
+  if (streamType === "audit") {
+    return "Audit event";
+  }
+  return "Platform event";
+}
+
+/** Maps string connection states into the shared operator tone palette. */
+function toneForConnectionName(state: string | undefined): StatusTone {
+  if (state === "ONLINE") {
+    return "online";
+  }
+  if (state === "STALE") {
+    return "stale";
+  }
+  if (state === "DEGRADED") {
+    return "degraded";
+  }
+  if (state === "OFFLINE") {
+    return "offline";
+  }
+  if (state === "RECONNECTING") {
+    return "reconnecting";
+  }
+  return "neutral";
+}
+
+/** Maps edge ack status to the severity operators need in the feed. */
+function toneForAckStatus(status: string | undefined): StatusTone {
+  if (!status || status === "ACCEPTED" || status === "DUPLICATE") {
+    return "online";
+  }
+  if (status === "REJECTED" || status === "EXPIRED" || status === "FAILED") {
+    return "danger";
+  }
+  return "neutral";
+}
+
+/** Identifies dispatch rejections that are safety blocks rather than bad requests. */
+function isSafetyBlockReason(reason: string): boolean {
+  return [
+    "LOW_BATTERY",
+    "RECONCILIATION_IN_PROGRESS",
+    "ROBOT_ALREADY_ASSIGNED",
+    "ROBOT_TELEMETRY_STALE"
+  ].includes(reason);
+}
+
+/** Keeps free-text reasons readable while still formatting known reason codes. */
+function formatReasonText(reason: string): string {
+  if (/^[A-Z0-9_]+$/.test(reason)) {
+    return formatRejectionReason(reason) ?? humanizeReasonCode(reason);
+  }
+  return truncateDetail(reason);
+}
+
+/** Prevents exceptionally long backend reasons from taking over the feed. */
+function truncateDetail(value: string, maxLength: number = 180): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength - 3)}...`;
+}
+
+/** Converts event/action names into title case fallback copy. */
+function humanizeEventName(name: string): string {
+  const words = name
+    .replace(/[._-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) {
+    return "Platform event";
+  }
+
+  return words
+    .map((word, index) => {
+      const normalized = word.toLowerCase();
+      return index === 0
+        ? `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`
+        : normalized;
+    })
+    .join(" ");
 }
 
 /** Reads one string property from a JSON-like object. */
@@ -425,6 +1037,15 @@ function readString(
 ): string | undefined {
   const field = value?.[key];
   return typeof field === "string" && field.length > 0 ? field : undefined;
+}
+
+/** Reads one finite numeric property from a JSON-like object. */
+function readNumber(
+  value: Record<string, unknown> | undefined,
+  key: string
+): number | undefined {
+  const field = value?.[key];
+  return typeof field === "number" && Number.isFinite(field) ? field : undefined;
 }
 
 /** Narrows JSON-like values to plain records for feed summarization. */

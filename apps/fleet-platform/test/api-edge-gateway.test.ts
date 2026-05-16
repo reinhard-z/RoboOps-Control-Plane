@@ -28,7 +28,7 @@ interface TestWebSocket {
   ): void;
 }
 
-describe("phase 2 fleet platform API and edge gateway", () => {
+describe("fleet platform API and edge gateway", () => {
   let runtime: FleetPlatformRuntime;
   let baseUrl: string;
   let edgeUrl: string;
@@ -63,7 +63,7 @@ describe("phase 2 fleet platform API and edge gateway", () => {
     const createResponse = await postJson(`${baseUrl}/missions`, {
       robotId: "robot-a",
       type: "GO_TO_POSE",
-      idempotencyKey: "operator:test:phase2:create",
+      idempotencyKey: "operator:test:api-edge:create",
       payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
     });
     expect(createResponse.status).toBe(202);
@@ -81,7 +81,7 @@ describe("phase 2 fleet platform API and edge gateway", () => {
         type: "edge.command_ack",
         payload: {
           schemaVersion: protocolSchemaVersions.commandAck,
-          ackId: "ack-phase2-001",
+          ackId: "ack-api-edge-001",
           commandId: command.commandId,
           missionId: command.missionId,
           robotId: command.robotId,
@@ -137,7 +137,7 @@ describe("phase 2 fleet platform API and edge gateway", () => {
         type: "edge.command_ack",
         payload: {
           schemaVersion: protocolSchemaVersions.commandAck,
-          ackId: "ack-phase2-cancel-001",
+          ackId: "ack-api-edge-cancel-001",
           commandId: cancelCommand.commandId,
           missionId: cancelCommand.missionId,
           robotId: cancelCommand.robotId,
@@ -156,6 +156,26 @@ describe("phase 2 fleet platform API and edge gateway", () => {
         readonly mission: { readonly lifecycleState: string };
       };
       expect(missionBody.mission.lifecycleState).toBe("CANCELLED");
+    });
+
+    const cancelAuditResponse = await fetch(
+      `${baseUrl}/audit-events?missionId=${command.missionId}`
+    );
+    const cancelAuditBody = (await cancelAuditResponse.json()) as {
+      readonly auditEvents: readonly {
+        readonly action: string;
+        readonly commandId?: string;
+        readonly details: Record<string, unknown>;
+      }[];
+    };
+    const cancelAckAudit = cancelAuditBody.auditEvents.find(
+      (event) =>
+        event.action === "mission.command.acked" &&
+        event.commandId === cancelCommand.commandId
+    );
+    expect(cancelAckAudit?.details).toMatchObject({
+      commandType: "CANCEL_MISSION",
+      lifecycleState: "CANCELLED"
     });
 
     edge.close();
@@ -179,7 +199,7 @@ describe("phase 2 fleet platform API and edge gateway", () => {
       JSON.stringify({
         type: "edge.hello",
         payload: {
-          edgeSessionId: "edge-session-phase2-hello",
+          edgeSessionId: "edge-session-api-edge-hello",
           edgeAgentVersion: "0.1.0",
           lastSeenCommandSequence: 0
         }

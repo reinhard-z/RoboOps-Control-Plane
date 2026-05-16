@@ -419,6 +419,7 @@ dd small {
 }
 
 .event-item {
+  min-width: 0;
   border-left: 4px solid var(--border);
   border-radius: 6px;
   background: #fafbfc;
@@ -447,7 +448,9 @@ dd small {
   margin: 0;
   font-size: 14px;
   font-weight: 900;
+  line-height: 1.3;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .event-detail,
@@ -456,7 +459,9 @@ dd small {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 @media (max-width: 1080px) {
