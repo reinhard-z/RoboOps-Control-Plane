@@ -31,6 +31,18 @@ export { PostgresDomainStateRepository } from "./postgres-domain-state-repositor
 export type {
   PostgresDomainStateRepositoryOptions
 } from "./postgres-domain-state-repository.js";
+export {
+  PostgresOutboxStore,
+  maxOutboxErrorTextLength,
+  sanitizeOutboxErrorText
+} from "./postgres-outbox-store.js";
+export type {
+  ClaimedOutboxEvent,
+  ClaimOutboxBatchOptions,
+  MarkOutboxEventPublishedOptions,
+  PostgresOutboxStoreOptions,
+  RecordOutboxEventFailureOptions
+} from "./postgres-outbox-store.js";
 export { InMemoryDomainStateRepository } from "./repository.js";
 export type {
   DomainStateMutation,

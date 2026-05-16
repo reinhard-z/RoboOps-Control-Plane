@@ -12,8 +12,9 @@ operator console slice for the incident demo.
 - `packages/fleet-domain`: pure domain state machine.
 - `packages/fleet-persistence`: repository contract, in-memory `DomainState`
   implementation used by default, Postgres migrations, an opt-in Postgres
-  repository adapter for durable runtime state, and a transactional outbox
-  enqueue path for reducer-produced domain and audit records.
+  repository adapter for durable runtime state, a transactional outbox enqueue
+  path for reducer-produced domain and audit records, and a Postgres outbox
+  helper for bounded claim/publish/retry operations.
 - `packages/test-support`: fake clock/test helpers.
 - Domain tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: HTTP API, SSE stream, edge WebSocket gateway, queued
@@ -33,6 +34,10 @@ operator console slice for the incident demo.
   active work. Mission rows and selected mission details surface platform
   reasons, preserve structured cancel rejections, and separate active,
   terminal, blocked, and manual-review states.
+- `apps/event-worker`: single-pass Postgres outbox worker foundation. It can
+  claim available unpublished rows, release them for retry when publication is
+  not configured, or mark them published through an explicit no-op publisher for
+  local validation. It is not started by Fleet Platform.
 
 ## What Exists Today
 
@@ -46,12 +51,14 @@ flowchart LR
     Protocol["fleet-protocol<br/>contracts + schemas"]
     Api["fleet-platform<br/>HTTP/SSE/WebSocket"]
     Persistence["fleet-persistence<br/>repository contract<br/>in-memory default<br/>Postgres adapter + migrations"]
+    Worker["event-worker<br/>single-pass outbox worker"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
     UI["operator-ui<br/>local browser console"]
     Tests --> Domain
     Tests --> Protocol
     Domain --> Protocol
     Api --> Persistence
+    Worker --> Persistence
     Api --> Domain
     Persistence --> Domain
     Api --> Protocol
@@ -59,9 +66,7 @@ flowchart LR
     Simulator --> Api
     UI --> Api
   end
-
   subgraph Placeholders["Scaffolded for future capabilities"]
-    Worker["event-worker"]
     Observability["observability"]
   end
 ```
@@ -181,9 +186,10 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 - Keep `DomainState` behind the `fleet-persistence` repository contract and
   Fleet Platform service functions. Fleet Platform defaults to the in-memory
   adapter; Postgres is selected only with explicit runtime configuration.
-- Keep the Postgres outbox write path internal to persistence for now. It
-  enqueues reducer-produced domain and audit records in the same transaction as
-  state replacement, but no worker or external publisher runs yet.
+- Keep the Postgres outbox write path internal to persistence. It enqueues
+  reducer-produced domain and audit records in the same transaction as state
+  replacement. The event worker is a separate manual process and does not
+  publish externally yet.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
 - Publish reducer-produced `domainEvents` and `auditEvents` to API responses/SSE.
@@ -240,6 +246,14 @@ before it starts the Postgres-backed runtime:
 ROBOOPS_RUN_POSTGRES_TESTS=true \
 FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
 pnpm --filter @roboops/fleet-platform test
+```
+
+Run one manual event worker pass against the migrated local Postgres database.
+Without `--publish-noop`, claimed rows are released for retry because external
+publication is not configured yet:
+
+```sh
+pnpm --filter @roboops/event-worker once -- --local
 ```
 
 Run Fleet Platform with the default in-memory repository by leaving persistence
