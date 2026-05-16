@@ -15,13 +15,17 @@ operator console slice for the incident demo.
   repository adapter for durable runtime state, a transactional outbox enqueue
   path for reducer-produced domain and audit records, and a Postgres outbox
   helper for bounded claim/publish/retry operations.
+- `packages/observability`: dependency-free structured logger contracts,
+  correlation helpers, safe error classification, and an in-process Prometheus
+  text metrics registry.
 - `packages/test-support`: fake clock/test helpers.
 - Domain tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: HTTP API, SSE stream, edge WebSocket gateway, queued
   command delivery, cancel command flow, telemetry freshness sweep, and explicit
   runtime persistence selection with in-memory as the default. `/health/live`
-  is a cheap process liveness check, while `/health/ready` verifies that the
-  configured repository can read the current domain state.
+  is a cheap process liveness check, `/health/ready` verifies that the
+  configured repository can read the current domain state, and `/metrics`
+  exposes local Prometheus text metrics from the process.
 - `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
   `edge.hello`, accepts `GO_TO_POSE` and `CANCEL_MISSION`, emits accepted acks,
   sends heartbeats, and can simulate stale telemetry or reconnect handshakes.
@@ -37,7 +41,8 @@ operator console slice for the incident demo.
 - `apps/event-worker`: single-pass Postgres outbox worker foundation. It can
   claim available unpublished rows, release them for retry when publication is
   not configured, or mark them published through an explicit no-op publisher for
-  local validation. It is not started by Fleet Platform.
+  local validation. It emits a structured pass summary and local counters when
+  run, and it is not started by Fleet Platform.
 
 ## What Exists Today
 
@@ -52,6 +57,7 @@ flowchart LR
     Api["fleet-platform<br/>HTTP/SSE/WebSocket"]
     Persistence["fleet-persistence<br/>repository contract<br/>in-memory default<br/>Postgres adapter + migrations"]
     Worker["event-worker<br/>single-pass outbox worker"]
+    Observability["observability<br/>structured logs<br/>Prometheus text metrics"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
     UI["operator-ui<br/>local browser console"]
     Tests --> Domain
@@ -62,12 +68,11 @@ flowchart LR
     Api --> Domain
     Persistence --> Domain
     Api --> Protocol
+    Api --> Observability
+    Worker --> Observability
     Simulator --> Protocol
     Simulator --> Api
     UI --> Api
-  end
-  subgraph Placeholders["Scaffolded for future capabilities"]
-    Observability["observability"]
   end
 ```
 
@@ -228,6 +233,17 @@ In Postgres mode, `/health/ready` returns `503` with a sanitized structured
 error if the database is unavailable or the migrations have not been applied.
 The manual readiness command uses the same repository read path and also keeps
 database URLs, credentials, and raw driver text out of user-facing output.
+
+Inspect local in-process metrics without adding Prometheus, Grafana, or a
+collector:
+
+```sh
+curl -s http://127.0.0.1:4010/metrics
+```
+
+Metrics reset on process restart. Labels are intentionally bounded; route
+labels use templates, and robot ids, mission ids, command ids, correlation ids,
+database URLs, credentials, and raw errors are not metric labels.
 
 Run the optional Postgres-backed repository checks against a disposable local
 database:

@@ -6,6 +6,13 @@ import {
   localPostgresDatabaseUrl
 } from "@roboops/fleet-persistence";
 import type { ClaimedOutboxEvent } from "@roboops/fleet-persistence";
+import {
+  MetricsRegistry,
+  SilentStructuredLogger,
+  classifyErrorType
+} from "@roboops/observability";
+import type { LogFields } from "@roboops/observability";
+import type { StructuredLogger } from "@roboops/observability";
 
 export const eventWorkerApp = "@roboops/event-worker";
 
@@ -46,6 +53,8 @@ export interface RunEventWorkerOnceOptions {
   readonly retryDelayMs?: number;
   readonly publisher?: EventWorkerPublisher;
   readonly now?: () => Date;
+  readonly logger?: StructuredLogger;
+  readonly metrics?: EventWorkerMetrics;
 }
 
 /** Counts returned by the single-pass worker for CLI output and tests. */
@@ -67,11 +76,56 @@ export interface EventWorkerCliIo {
 export interface EventWorkerCliDependencies {
   readonly store?: EventWorkerOutboxStore;
   readonly publisher?: EventWorkerPublisher;
+  readonly logger?: StructuredLogger;
+  readonly metrics?: EventWorkerMetrics;
 }
 
 /** No-op publisher used only when the CLI explicitly asks to mark rows published. */
 export class NoopOutboxPublisher implements EventWorkerPublisher {
   async publish(): Promise<void> {}
+}
+
+/** Event worker metric recording surface for single-pass outbox summaries. */
+export interface EventWorkerMetrics {
+  readonly registry: MetricsRegistry;
+  recordPass(publication: "configured" | "not_configured"): void;
+  recordOutboxEvents(outcome: EventWorkerOutboxOutcome, count: number): void;
+}
+
+/** Low-cardinality result labels used by the worker's outbox counters. */
+export type EventWorkerOutboxOutcome =
+  | "claimed"
+  | "published"
+  | "failed"
+  | "deferred"
+  | "stale_claim";
+
+/** Creates the worker metrics set for embedders and CLI tests. */
+export function createEventWorkerMetrics(
+  registry = new MetricsRegistry()
+): EventWorkerMetrics {
+  const passes = registry.counter({
+    name: "roboops_event_worker_passes_total",
+    help: "Single-pass event worker runs by publication configuration.",
+    labelNames: ["publication"]
+  });
+  const events = registry.counter({
+    name: "roboops_event_worker_outbox_events_total",
+    help: "Outbox events observed by one-pass event worker outcome.",
+    labelNames: ["outcome"]
+  });
+
+  return {
+    registry,
+    recordPass(publication): void {
+      passes.increment({ publication });
+    },
+    recordOutboxEvents(outcome, count): void {
+      if (count > 0) {
+        events.increment({ outcome }, count);
+      }
+    }
+  };
 }
 
 /** Runs one bounded outbox pass without owning process lifetime or scheduling. */
@@ -81,6 +135,7 @@ export async function runEventWorkerOnce(
   const batchSize = options.batchSize ?? defaultBatchSize;
   const retryDelayMs = options.retryDelayMs ?? defaultRetryDelayMs;
   const clock = options.now ?? (() => new Date());
+  const logger = options.logger ?? new SilentStructuredLogger();
   const claimedEvents = await options.store.claimBatch({
     workerId: options.workerId,
     batchSize,
@@ -130,13 +185,30 @@ export async function runEventWorkerOnce(
     }
   }
 
-  return {
+  const summary = {
     claimedCount: claimedEvents.length,
     publishedCount,
     failedCount,
     deferredCount,
     staleClaimCount
   };
+  const publication = options.publisher ? "configured" : "not_configured";
+  options.metrics?.recordPass(publication);
+  options.metrics?.recordOutboxEvents("claimed", summary.claimedCount);
+  options.metrics?.recordOutboxEvents("published", summary.publishedCount);
+  options.metrics?.recordOutboxEvents("failed", summary.failedCount);
+  options.metrics?.recordOutboxEvents("deferred", summary.deferredCount);
+  options.metrics?.recordOutboxEvents("stale_claim", summary.staleClaimCount);
+  logger.info("event worker pass summary", {
+    batchSize,
+    publication,
+    claimedCount: summary.claimedCount,
+    publishedCount: summary.publishedCount,
+    failedCount: summary.failedCount,
+    deferredCount: summary.deferredCount,
+    staleClaimCount: summary.staleClaimCount
+  });
+  return summary;
 }
 
 /** Runs the single-pass CLI and returns the process exit code the caller should use. */
@@ -164,6 +236,8 @@ export async function runEventWorkerCli(
     const publisher = parsed.publishNoop
       ? new NoopOutboxPublisher()
       : dependencies.publisher;
+    const logger = dependencies.logger ?? new IoStructuredLogger(io);
+    const metrics = dependencies.metrics ?? createEventWorkerMetrics();
     store =
       dependencies.store ??
       new PostgresOutboxStore({
@@ -176,6 +250,8 @@ export async function runEventWorkerCli(
       workerId,
       batchSize: parsed.batchSize,
       retryDelayMs: parsed.retryDelayMs,
+      logger,
+      metrics,
       ...(publisher ? { publisher } : {})
     });
     io.stdout(formatSummary(summary, publisher ? "configured" : "not_configured"));
@@ -381,10 +457,36 @@ function formatUsage(): string {
 
 /** Classifies failures without exposing driver messages or connection strings. */
 function classifyWorkerError(error: unknown): string {
-  if (error instanceof Error && /^[A-Za-z][A-Za-z0-9_.-]{0,80}$/.test(error.name)) {
-    return error.name;
+  return classifyErrorType(error);
+}
+
+/** Routes CLI structured logs through the same IO boundary as summary output. */
+class IoStructuredLogger implements StructuredLogger {
+  constructor(private readonly io: Pick<EventWorkerCliIo, "stdout">) {}
+
+  info(message: string, fields: LogFields = {}): void {
+    this.write("info", message, fields);
   }
-  return typeof error;
+
+  warn(message: string, fields: LogFields = {}): void {
+    this.write("warn", message, fields);
+  }
+
+  error(message: string, fields: LogFields = {}): void {
+    this.write("error", message, fields);
+  }
+
+  /** Keeps CLI log lines structured without bypassing test or embedder IO hooks. */
+  private write(level: string, message: string, fields: LogFields): void {
+    this.io.stdout(
+      JSON.stringify({
+        level,
+        message,
+        time: new Date().toISOString(),
+        ...fields
+      })
+    );
+  }
 }
 
 /** Quotes one CLI value while stripping control characters from console output. */

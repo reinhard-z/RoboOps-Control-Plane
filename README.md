@@ -64,6 +64,15 @@ pnpm --filter @roboops/fleet-platform check:postgres:local
 
 The readiness check is opt-in, read-only, and does not run migrations. It
 prints sanitized diagnostics if the database is unavailable or not migrated.
+Fleet Platform also exposes in-process Prometheus text metrics at `/metrics`
+without requiring a collector or Prometheus server:
+
+```sh
+curl -s http://127.0.0.1:4010/metrics
+```
+
+Metric labels use stable route templates and sanitized error types; IDs,
+database URLs, credentials, and raw driver text are not used as labels.
 
 Or start it with protected demo reset/control endpoints enabled:
 

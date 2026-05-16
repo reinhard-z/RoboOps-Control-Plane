@@ -7,6 +7,11 @@ import {
   InMemoryDomainStateRepository,
   PostgresDomainStateRepository
 } from "@roboops/fleet-persistence";
+import {
+  classifyErrorType,
+  prometheusTextContentType,
+  readCorrelationIdHeader
+} from "@roboops/observability";
 
 import { loadFleetPlatformConfig } from "./config.js";
 import { PlatformEventHub, type PlatformStreamEvent } from "./event-hub.js";
@@ -15,6 +20,11 @@ import {
   ConsoleStructuredLogger,
   type StructuredLogger
 } from "./logging.js";
+import {
+  type FleetPlatformMetrics,
+  createFleetPlatformMetrics,
+  routeLabelForRequest
+} from "./metrics.js";
 import {
   classifyReadinessError,
   readinessRepositoryReadTimeoutMs,
@@ -43,6 +53,7 @@ export interface FleetPlatformRuntime {
   readonly edgeGateway: EdgeWebSocketGateway;
   readonly config: FleetPlatformConfig;
   readonly repository: DomainStateRepository;
+  readonly metrics: FleetPlatformMetrics;
   stop(): Promise<void>;
 }
 
@@ -52,6 +63,7 @@ export interface FleetPlatformRuntimeOptions {
   /** Initial state is intentionally limited to the in-memory adapter used by tests and demos. */
   readonly initialState?: DomainState;
   readonly logger?: StructuredLogger;
+  readonly metrics?: FleetPlatformMetrics;
 }
 
 /** Creates the HTTP/SSE/WebSocket runtime without binding a TCP port. */
@@ -68,20 +80,22 @@ export function createFleetPlatformRuntime(
   });
   const runtimeRepository = createRuntimeRepository(config, options.initialState);
   const eventHub = new PlatformEventHub();
+  const metrics = options.metrics ?? createFleetPlatformMetrics();
   const service = new FleetPlatformService(
     runtimeRepository.repository,
     eventHub,
     logger,
-    config
+    config,
+    metrics
   );
-  const edgeGateway = new EdgeWebSocketGateway(service, logger);
+  const edgeGateway = new EdgeWebSocketGateway(service, logger, metrics);
   service.setEdgeTransport(edgeGateway);
 
   const server = createServer((request, response) => {
-    handleHttpRequest(request, response, service, eventHub, config, logger).catch(
+    handleHttpRequest(request, response, service, eventHub, config, logger, metrics).catch(
       (error: unknown) => {
         logger.error("unhandled http request error", {
-          error: error instanceof Error ? error.message : String(error)
+          errorType: classifyErrorType(error)
         });
         sendError(response, config, 500, "INTERNAL_ERROR", "internal server error", {
           correlationId: createPlatformId("corr_error")
@@ -103,6 +117,7 @@ export function createFleetPlatformRuntime(
     edgeGateway,
     config,
     repository: runtimeRepository.repository,
+    metrics,
     async stop(): Promise<void> {
       await stopFreshnessSweep();
       await edgeGateway.closeAll();
@@ -207,7 +222,7 @@ function startTelemetryFreshnessSweep(
       .then(() => undefined)
       .catch((error: unknown) => {
         logger.error("telemetry freshness sweep failed", {
-          error: error instanceof Error ? error.message : String(error)
+          errorType: classifyErrorType(error)
         });
       })
       .finally(() => {
@@ -229,16 +244,22 @@ async function handleHttpRequest(
   service: FleetPlatformService,
   eventHub: PlatformEventHub,
   config: FleetPlatformConfig,
-  logger: StructuredLogger
+  logger: StructuredLogger,
+  metrics: FleetPlatformMetrics
 ): Promise<void> {
   applyCors(response, config);
+  const url = parseRequestUrl(request);
+  recordHttpRequestOnFinish(response, metrics, {
+    method: request.method,
+    route: routeLabelForRequest(request.method, url?.pathname)
+  });
+
   if (request.method === "OPTIONS") {
     response.writeHead(204);
     response.end();
     return;
   }
 
-  const url = parseRequestUrl(request);
   if (!url) {
     sendError(response, config, 400, "BAD_REQUEST", "request URL is required", {
       correlationId: createPlatformId("corr_bad_request")
@@ -265,8 +286,14 @@ async function handleHttpRequest(
       eventHub,
       config,
       context,
-      logger
+      logger,
+      metrics
     );
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/metrics") {
+    sendMetrics(response, config, metrics);
     return;
   }
 
@@ -391,7 +418,8 @@ async function sendReadinessResponse(
   eventHub: PlatformEventHub,
   config: FleetPlatformConfig,
   context: RequestContext,
-  logger: StructuredLogger
+  logger: StructuredLogger,
+  metrics: FleetPlatformMetrics
 ): Promise<void> {
   try {
     await readStateForReadiness(service);
@@ -403,11 +431,17 @@ async function sendReadinessResponse(
       sseSubscribers: eventHub.listenerCount()
     });
   } catch (error: unknown) {
+    const errorType = classifyReadinessError(error);
+    metrics.recordReadinessFailure({
+      persistenceMode: config.persistence.mode,
+      check: repositoryReadinessCheckName,
+      errorType
+    });
     logger.warn("persistence readiness check failed", {
       correlationId: context.correlationId,
       persistenceMode: config.persistence.mode,
       check: repositoryReadinessCheckName,
-      errorType: classifyReadinessError(error)
+      errorType
     });
     sendError(
       response,
@@ -656,6 +690,19 @@ function sendJson(
   response.end(JSON.stringify(body));
 }
 
+/** Sends the current in-process metrics in Prometheus text format. */
+function sendMetrics(
+  response: ServerResponse,
+  config: FleetPlatformConfig,
+  metrics: FleetPlatformMetrics
+): void {
+  response.writeHead(200, {
+    "Access-Control-Allow-Origin": config.corsAllowOrigin,
+    "Content-Type": prometheusTextContentType
+  });
+  response.end(metrics.registry.renderPrometheusText());
+}
+
 /** Sends a validation failure in the standard error response shape. */
 function sendValidationError(
   response: ServerResponse,
@@ -694,13 +741,28 @@ function applyCors(response: ServerResponse, config: FleetPlatformConfig): void 
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 }
 
+/** Records the final HTTP status after the response has been written. */
+function recordHttpRequestOnFinish(
+  response: ServerResponse,
+  metrics: FleetPlatformMetrics,
+  request: {
+    readonly method: string | undefined;
+    readonly route: string;
+  }
+): void {
+  response.once("finish", () => {
+    metrics.recordHttpRequest({
+      method: request.method,
+      route: request.route,
+      statusCode: response.statusCode
+    });
+  });
+}
+
 /** Builds request context from headers plus local fallback ids. */
 function createRequestContext(request: IncomingMessage): RequestContext {
-  const correlationHeader = request.headers["x-correlation-id"];
   const correlationId =
-    typeof correlationHeader === "string"
-      ? correlationHeader
-      : createPlatformId("corr_http");
+    readCorrelationIdHeader(request.headers) ?? createPlatformId("corr_http");
   return {
     correlationId,
     causationId: createPlatformId("http_request"),

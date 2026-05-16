@@ -1,3 +1,5 @@
+import { classifyErrorType } from "@roboops/observability";
+
 const defaultReadinessTimeoutMs = 2_000;
 
 /** Stable label for the repository read check used by HTTP and CLI readiness paths. */
@@ -31,18 +33,7 @@ export async function runRepositoryReadinessCheck(
 
 /** Classifies readiness failures without exposing raw driver text or connection details. */
 export function classifyReadinessError(error: unknown): string {
-  if (error instanceof Error && error.name.length > 0) {
-    return safeErrorName(error.name);
-  }
-  return typeof error;
-}
-
-/** Keeps error type labels useful while rejecting values that look like payload text. */
-function safeErrorName(name: string): string {
-  if (/^[A-Za-z][A-Za-z0-9_.-]{0,80}$/.test(name)) {
-    return name;
-  }
-  return "Error";
+  return classifyErrorType(error);
 }
 
 /** Internal readiness sentinel that avoids exposing raw repository error text. */

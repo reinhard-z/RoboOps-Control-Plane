@@ -27,6 +27,7 @@ import type { DomainStateRepository } from "@roboops/fleet-persistence";
 import { PlatformEventHub } from "./event-hub.js";
 import { createPlatformId, isoPlus } from "./ids.js";
 import type { StructuredLogger } from "./logging.js";
+import type { FleetPlatformMetrics } from "./metrics.js";
 import { createSeededDomainState } from "./repository.js";
 import type {
   CancelMissionRequest,
@@ -58,7 +59,8 @@ export class FleetPlatformService {
     private readonly repository: DomainStateRepository,
     private readonly eventHub: PlatformEventHub,
     private readonly logger: StructuredLogger,
-    private readonly config: FleetPlatformConfig
+    private readonly config: FleetPlatformConfig,
+    private readonly metrics: FleetPlatformMetrics
   ) {}
 
   setEdgeTransport(edgeTransport: EdgeCommandTransport): void {
@@ -72,6 +74,15 @@ export class FleetPlatformService {
     await this.evaluateKnownRobotFreshness(request.robotId, context);
 
     const input = this.toDispatchInput(request, context);
+    this.logger.info("mission command requested", {
+      correlationId: context.correlationId,
+      causationId: context.causationId,
+      missionId: input.missionId,
+      commandId: input.commandId,
+      robotId: input.robotId,
+      commandType: input.type,
+      safetyClass: input.safetyClass
+    });
     const transition = await this.applyTransition((state) =>
       dispatchMissionCommand(state, input)
     );
@@ -105,6 +116,13 @@ export class FleetPlatformService {
       context.now,
       request.expiresInMs ?? this.config.defaultCommandTtlMs
     );
+    this.logger.info("mission command requested", {
+      correlationId: context.correlationId,
+      causationId: context.causationId,
+      missionId,
+      commandId,
+      commandType: "CANCEL_MISSION"
+    });
     const transition = await this.repository.update((state) => {
       const mission = getMission(state, missionId);
       if (!mission) {
@@ -246,7 +264,19 @@ export class FleetPlatformService {
     }
 
     if (message.type === "edge.command_ack") {
-      await this.applyTransition((state) => applyCommandAck(state, message.payload));
+      const transition = await this.applyTransition((state) =>
+        applyCommandAck(state, message.payload)
+      );
+      this.logger.info("command ack processed", {
+        correlationId: context.correlationId,
+        causationId: context.causationId,
+        ackId: message.payload.ackId,
+        commandId: message.payload.commandId,
+        missionId: message.payload.missionId,
+        robotId: message.payload.robotId,
+        ackStatus: message.payload.status,
+        resultStatus: transition.result.status
+      });
       return;
     }
 
@@ -284,6 +314,22 @@ export class FleetPlatformService {
         correlationId: context.correlationId
       })
     );
+    if (
+      transition.result.status === "UPDATED" &&
+      transition.result.robot.connectionState !== "ONLINE"
+    ) {
+      this.metrics.recordTelemetryFreshnessDegradation({
+        previousConnectionState: transition.result.previousConnectionState,
+        connectionState: transition.result.robot.connectionState
+      });
+      this.logger.warn("telemetry freshness degraded", {
+        correlationId: context.correlationId,
+        robotId,
+        missionId: transition.result.robot.activeMissionId,
+        previousConnectionState: transition.result.previousConnectionState,
+        connectionState: transition.result.robot.connectionState
+      });
+    }
     return transition.result;
   }
 
@@ -506,6 +552,8 @@ export class FleetPlatformService {
   ): void {
     for (const event of transition.domainEvents) {
       this.eventHub.publish("domain", event, event.receivedAt);
+      this.metrics.recordDomainEvent(event.eventType);
+      this.logIncidentDomainTransition(event);
       this.logger.info("domain event emitted", {
         eventType: event.eventType,
         correlationId: event.correlationId,
@@ -515,6 +563,7 @@ export class FleetPlatformService {
     }
     for (const event of transition.auditEvents) {
       this.eventHub.publish("audit", event, event.occurredAt);
+      this.metrics.recordAuditEvent(event.action);
       this.logger.info("audit event emitted", {
         action: event.action,
         correlationId: event.correlationId,
@@ -522,6 +571,89 @@ export class FleetPlatformService {
         commandId: event.commandId,
         robotId: event.robotId
       });
+    }
+  }
+
+  /** Emits concise incident-story logs for important reducer-produced transitions. */
+  private logIncidentDomainTransition(event: EventEnvelopeV1): void {
+    if (event.eventType === "mission.command.dispatched") {
+      this.logger.info("mission command accepted", {
+        eventType: event.eventType,
+        correlationId: event.correlationId,
+        causationId: event.causationId,
+        missionId: event.aggregateId,
+        commandId: readPayloadString(event.payload, "commandId"),
+        robotId: readPayloadString(event.payload, "robotId")
+      });
+      return;
+    }
+
+    if (event.eventType === "mission.command.rejected") {
+      this.logger.warn("mission command rejected", {
+        eventType: event.eventType,
+        correlationId: event.correlationId,
+        causationId: event.causationId,
+        missionId: event.aggregateId,
+        reason: readPayloadString(event.payload, "reason")
+      });
+      return;
+    }
+
+    if (event.eventType === "mission.cancel.requested") {
+      this.logger.info("mission command accepted", {
+        eventType: event.eventType,
+        correlationId: event.correlationId,
+        causationId: event.causationId,
+        missionId: event.aggregateId,
+        commandId: readPayloadString(event.payload, "commandId"),
+        robotId: readPayloadString(event.payload, "robotId"),
+        commandType: "CANCEL_MISSION"
+      });
+      return;
+    }
+
+    if (event.eventType === "mission.cancel.rejected") {
+      this.logger.warn("mission command rejected", {
+        eventType: event.eventType,
+        correlationId: event.correlationId,
+        causationId: event.causationId,
+        missionId: event.aggregateId,
+        reason: readPayloadString(event.payload, "reason"),
+        commandType: "CANCEL_MISSION"
+      });
+      return;
+    }
+
+    if (event.eventType === "robot.reconnect.started") {
+      this.logger.warn("reconnect started", {
+        eventType: event.eventType,
+        correlationId: event.correlationId,
+        robotId: event.aggregateId,
+        previousConnectionState: readPayloadString(
+          event.payload,
+          "previousConnectionState"
+        )
+      });
+      return;
+    }
+
+    if (event.eventType === "mission.reconciliation.completed") {
+      const outcome = readPayloadString(event.payload, "outcome");
+      this.logger[outcome === "MANUAL_REVIEW" ? "warn" : "info"](
+        outcome === "MANUAL_REVIEW"
+          ? "reconnect manual review required"
+          : "reconnect resolved",
+        {
+          eventType: event.eventType,
+          correlationId: event.correlationId,
+          causationId: event.causationId,
+          aggregateType: event.aggregateType,
+          aggregateId: event.aggregateId,
+          outcome,
+          robotId: readPayloadString(event.payload, "robotId"),
+          reportedMissionId: readPayloadString(event.payload, "reportedMissionId")
+        }
+      );
     }
   }
 
@@ -575,4 +707,16 @@ function matchesValue(event: EventEnvelopeV1, value: string): boolean {
   }
   const payload = event.payload;
   return payload["missionId"] === value || payload["robotId"] === value;
+}
+
+/** Reads string-like event payload fields without copying whole payloads into logs. */
+function readPayloadString(
+  payload: Readonly<Record<string, unknown>>,
+  key: string
+): string | undefined {
+  const value = payload[key];
+  if (typeof value === "string") {
+    return value;
+  }
+  return value === null || value === undefined ? undefined : String(value);
 }

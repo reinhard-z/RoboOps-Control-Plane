@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { ClaimedOutboxEvent } from "@roboops/fleet-persistence";
+import type { LogFields, StructuredLogger } from "@roboops/observability";
 
 import {
   NoopOutboxPublisher,
+  createEventWorkerMetrics,
   runEventWorkerCli,
   runEventWorkerOnce
 } from "../src/index.js";
@@ -65,6 +67,55 @@ describe("event worker single-pass runner", () => {
     expect(summary.publishedCount).toBe(1);
   });
 
+  it("records summary logs and metrics for one worker pass", async () => {
+    const store = new FakeOutboxStore([claimedOutboxEvent("outbox-observed")]);
+    const logger = new CapturingStructuredLogger();
+    const metrics = createEventWorkerMetrics();
+
+    const summary = await runEventWorkerOnce({
+      store,
+      workerId: "worker-observed",
+      publisher: new NoopOutboxPublisher(),
+      logger,
+      metrics,
+      now: () => new Date("2026-05-16T10:00:00.000Z")
+    });
+
+    expect(summary).toMatchObject({
+      claimedCount: 1,
+      publishedCount: 1,
+      failedCount: 0,
+      deferredCount: 0,
+      staleClaimCount: 0
+    });
+    expect(logger.entries).toEqual([
+      {
+        level: "info",
+        message: "event worker pass summary",
+        fields: {
+          batchSize: 10,
+          publication: "configured",
+          claimedCount: 1,
+          publishedCount: 1,
+          failedCount: 0,
+          deferredCount: 0,
+          staleClaimCount: 0
+        }
+      }
+    ]);
+    const text = metrics.registry.renderPrometheusText();
+    expect(text).toContain(
+      'roboops_event_worker_passes_total{publication="configured"} 1'
+    );
+    expect(text).toContain(
+      'roboops_event_worker_outbox_events_total{outcome="claimed"} 1'
+    );
+    expect(text).toContain(
+      'roboops_event_worker_outbox_events_total{outcome="published"} 1'
+    );
+    expect(text).not.toContain("worker-observed");
+  });
+
   it("prints CLI summaries without exposing database URLs", async () => {
     const store = new FakeOutboxStore([claimedOutboxEvent("outbox-cli")]);
     const stdout: string[] = [];
@@ -87,13 +138,41 @@ describe("event worker single-pass runner", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toEqual([]);
-    expect(stdout).toHaveLength(1);
-    expect(stdout[0]).toContain("event worker pass complete");
-    expect(stdout[0]).toContain("publication=not_configured");
-    expect(stdout[0]).not.toContain("postgres://");
-    expect(stdout[0]).not.toContain("secret");
+    expect(stdout).toHaveLength(2);
+    expect(JSON.parse(stdout[0]!) as Record<string, unknown>).toMatchObject({
+      level: "info",
+      message: "event worker pass summary",
+      publication: "not_configured",
+      claimedCount: 1,
+      deferredCount: 1
+    });
+    expect(stdout[1]).toContain("event worker pass complete");
+    expect(stdout[1]).toContain("publication=not_configured");
+    expect(JSON.stringify(stdout)).not.toContain("postgres://");
+    expect(JSON.stringify(stdout)).not.toContain("secret");
   });
 });
+
+/** Captures worker structured logs without writing to the test console. */
+class CapturingStructuredLogger implements StructuredLogger {
+  readonly entries: Array<{
+    readonly level: "info" | "warn" | "error";
+    readonly message: string;
+    readonly fields: LogFields;
+  }> = [];
+
+  info(message: string, fields: LogFields = {}): void {
+    this.entries.push({ level: "info", message, fields });
+  }
+
+  warn(message: string, fields: LogFields = {}): void {
+    this.entries.push({ level: "warn", message, fields });
+  }
+
+  error(message: string, fields: LogFields = {}): void {
+    this.entries.push({ level: "error", message, fields });
+  }
+}
 
 /** In-memory test double for the worker's narrow outbox store dependency. */
 class FakeOutboxStore implements EventWorkerOutboxStore {

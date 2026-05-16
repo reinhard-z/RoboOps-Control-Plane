@@ -4,9 +4,11 @@ import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 
 import type { CommandEnvelopeV1, RobotId } from "@roboops/fleet-protocol";
+import { classifyErrorType } from "@roboops/observability";
 
 import { createPlatformId, nowIso } from "./ids.js";
 import type { StructuredLogger } from "./logging.js";
+import type { FleetPlatformMetrics } from "./metrics.js";
 import type { FleetPlatformService } from "./service.js";
 import type { EdgeWireMessage, PlatformWireMessage, RequestContext } from "./types.js";
 import { parseEdgeWireMessage } from "./validation.js";
@@ -112,7 +114,8 @@ export class EdgeWebSocketGateway {
 
   constructor(
     private readonly service: FleetPlatformService,
-    private readonly logger: StructuredLogger
+    private readonly logger: StructuredLogger,
+    private readonly metrics: FleetPlatformMetrics
   ) {}
 
   handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer): boolean {
@@ -148,6 +151,7 @@ export class EdgeWebSocketGateway {
     peer.receiveInitialBytes(head);
 
     this.logger.info("edge websocket connected", { robotId });
+    this.metrics.recordEdgeConnection("opened");
     return true;
   }
 
@@ -175,6 +179,7 @@ export class EdgeWebSocketGateway {
     for (const peer of peers) {
       peer.sendJson(message);
     }
+    this.metrics.recordEdgeMessageSent(message.type);
     this.logger.info("edge websocket message sent", {
       robotId,
       messageType: message.type,
@@ -212,6 +217,7 @@ export class EdgeWebSocketGateway {
     }
 
     peers.delete(peer);
+    this.metrics.recordEdgeConnection("closed");
     if (peers.size > 0) {
       return;
     }
@@ -249,8 +255,11 @@ export class EdgeWebSocketGateway {
       .catch((error: unknown) => {
         this.logger.error("edge websocket task failed", {
           robotId,
-          error: error instanceof Error ? error.message : String(error)
+          errorType: classifyErrorType(error)
         });
+        if (peer) {
+          this.metrics.recordEdgeMessageSent("platform.error");
+        }
         peer?.sendJson({
           type: "platform.error",
           payload: {
@@ -276,6 +285,7 @@ export class EdgeWebSocketGateway {
   ): Promise<void> {
     const parsedJson = parseJson(messageText);
     if (!parsedJson.ok) {
+      this.metrics.recordEdgeMessageSent("platform.error");
       peer.sendJson({
         type: "platform.error",
         payload: { code: "EDGE_MESSAGE_INVALID_JSON", message: parsedJson.message }
@@ -285,6 +295,7 @@ export class EdgeWebSocketGateway {
 
     const parsedMessage = parseEdgeWireMessage(parsedJson.value);
     if (!parsedMessage.ok) {
+      this.metrics.recordEdgeMessageSent("platform.error");
       peer.sendJson({
         type: "platform.error",
         payload: {
@@ -296,6 +307,7 @@ export class EdgeWebSocketGateway {
     }
 
     if (!messageMatchesRobot(robotId, parsedMessage.value)) {
+      this.metrics.recordEdgeMessageSent("platform.error");
       peer.sendJson({
         type: "platform.error",
         payload: {
@@ -306,6 +318,7 @@ export class EdgeWebSocketGateway {
       return;
     }
 
+    this.metrics.recordEdgeMessageReceived(parsedMessage.value.type);
     await this.service.handleEdgeMessage(
       robotId,
       parsedMessage.value,
