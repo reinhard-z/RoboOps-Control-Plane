@@ -214,6 +214,16 @@ FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@12
 PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence test
 ```
 
+Run the optional Fleet Platform Postgres runtime persistence check against the
+same local database. The test applies any pending `fleet-persistence` migrations
+before it starts the Postgres-backed runtime:
+
+```sh
+ROBOOPS_RUN_POSTGRES_TESTS=true \
+FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform test
+```
+
 Run Fleet Platform with the default in-memory repository by leaving persistence
 env vars unset. Demo admin endpoints are disabled unless both `DEMO_MODE=true`
 and `DEMO_ADMIN_TOKEN` are set:
