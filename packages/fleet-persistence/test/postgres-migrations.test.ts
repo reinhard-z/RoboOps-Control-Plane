@@ -37,7 +37,9 @@ describe("Postgres migration files", () => {
     const migrations = await readOrderedSqlMigrations();
 
     expect(migrations.map((migration) => migration.name)).toEqual([
-      "0001_core_schema.sql"
+      "0001_core_schema.sql",
+      "0002_domain_state_bookmarks.sql",
+      "0003_robot_session_resolution.sql"
     ]);
     expect(migrations[0]?.checksumSha256).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -105,6 +107,50 @@ describe("Postgres migration files", () => {
     expect(auditTable).toContain("command_id text,");
     expect(auditTable).not.toContain("REFERENCES");
   });
+
+  it("contains reducer bookkeeping for repository state that is not a canonical entity", async () => {
+    const migration = (await readOrderedSqlMigrations()).find(
+      (candidate) => candidate.name === "0002_domain_state_bookmarks.sql"
+    );
+    if (!migration) {
+      throw new Error("Missing domain state bookmark migration");
+    }
+
+    expect(migration.sql).toContain(
+      "CREATE TABLE IF NOT EXISTS fleet_persistence.domain_state_bookmarks"
+    );
+    expect(migration.sql).toContain("processed_event_ids text[] NOT NULL");
+    expect(migration.sql).toContain("processed_ack_ids text[] NOT NULL");
+    expect(migration.sql).toContain(
+      "processed_reconnect_session_ids text[] NOT NULL"
+    );
+    expect(migration.sql).toContain("next_sequence_by_robot jsonb NOT NULL");
+    expect(migration.sql).toContain("domain_event_ids text[] NOT NULL");
+    expect(migration.sql).toContain("audit_event_ids text[] NOT NULL");
+  });
+
+  it("keeps robot session history tolerant of unresolved robot references", async () => {
+    const migration = (await readOrderedSqlMigrations()).find(
+      (candidate) => candidate.name === "0003_robot_session_resolution.sql"
+    );
+    if (!migration) {
+      throw new Error("Missing robot session resolution migration");
+    }
+
+    expect(migration.sql).toContain("ADD COLUMN IF NOT EXISTS resolved_robot_id text");
+    expect(migration.sql).toContain(
+      "DROP CONSTRAINT IF EXISTS robot_sessions_robot_id_fkey"
+    );
+    expect(migration.sql).toContain(
+      "FOREIGN KEY (resolved_robot_id)"
+    );
+    expect(migration.sql).toContain(
+      "REFERENCES fleet_persistence.robots (robot_id)"
+    );
+    expect(migration.sql).toContain(
+      "CREATE INDEX IF NOT EXISTS robot_sessions_resolved_robot_id_idx"
+    );
+  });
 });
 
 describe("Postgres migration planning", () => {
@@ -112,7 +158,9 @@ describe("Postgres migration planning", () => {
     const migrations = await readOrderedSqlMigrations();
     const firstPlan = buildMigrationPlan(migrations, []);
 
-    expect(firstPlan.map((entry) => entry.status)).toEqual(["apply"]);
+    expect(firstPlan.map((entry) => entry.status)).toEqual(
+      migrations.map(() => "apply")
+    );
 
     const appliedMigrations = migrations.map((migration) => ({
       name: migration.name,
@@ -120,7 +168,9 @@ describe("Postgres migration planning", () => {
     }));
     const secondPlan = buildMigrationPlan(migrations, appliedMigrations);
 
-    expect(secondPlan.map((entry) => entry.status)).toEqual(["skip"]);
+    expect(secondPlan.map((entry) => entry.status)).toEqual(
+      migrations.map(() => "skip")
+    );
   });
 
   it("fails when an applied migration checksum no longer matches local SQL", async () => {

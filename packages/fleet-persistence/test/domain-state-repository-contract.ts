@@ -10,7 +10,7 @@ import {
 /** Creates a repository instance for one contract test case. */
 export type DomainStateRepositoryFactory = (
   initialState?: DomainState
-) => DomainStateRepository;
+) => DomainStateRepository | Promise<DomainStateRepository>;
 
 /** Defines the shared whole-state repository behavior every implementation must preserve. */
 export function defineDomainStateRepositoryContract(
@@ -19,7 +19,7 @@ export function defineDomainStateRepositoryContract(
 ): void {
   describe(name, () => {
     it("starts from an empty domain state when no initial state is supplied", async () => {
-      const repository = createRepository();
+      const repository = await createRepository();
 
       expect(await repository.read()).toEqual({
         missions: {},
@@ -37,13 +37,13 @@ export function defineDomainStateRepositoryContract(
 
     it("reads the current complete domain state", async () => {
       const initialState = populatedDomainState("initial");
-      const repository = createRepository(initialState);
+      const repository = await createRepository(initialState);
 
       expectCompleteState(await repository.read(), initialState);
     });
 
     it("writes a complete replacement state without dropping any collections", async () => {
-      const repository = createRepository(populatedDomainState("initial"));
+      const repository = await createRepository(populatedDomainState("initial"));
       const replacementState = populatedDomainState("written");
 
       await repository.write(replacementState);
@@ -52,7 +52,7 @@ export function defineDomainStateRepositoryContract(
     });
 
     it("resets to a supplied complete state after previous writes", async () => {
-      const repository = createRepository(populatedDomainState("initial"));
+      const repository = await createRepository(populatedDomainState("initial"));
       await repository.write(populatedDomainState("written"));
 
       const resetState = populatedDomainState("reset");
@@ -63,7 +63,7 @@ export function defineDomainStateRepositoryContract(
 
     it("updates by passing the latest state into a callback and storing its result", async () => {
       const initialState = populatedDomainState("initial");
-      const repository = createRepository(initialState);
+      const repository = await createRepository(initialState);
       const replacementState = populatedDomainState("updated");
       const seenStates: DomainState[] = [];
 
@@ -79,7 +79,7 @@ export function defineDomainStateRepositoryContract(
 
     it("leaves the current state untouched when an update callback fails", async () => {
       const initialState = populatedDomainState("initial");
-      const repository = createRepository(initialState);
+      const repository = await createRepository(initialState);
       const failingMutator: DomainStateMutator<DomainState> = () => {
         throw new Error("update failed");
       };
@@ -108,7 +108,7 @@ function expectCompleteState(actual: DomainState, expected: DomainState): void {
 }
 
 /** Builds a fully populated aggregate so contract tests catch dropped state fields. */
-function populatedDomainState(suffix: string): DomainState {
+export function populatedDomainState(suffix: string): DomainState {
   const missionId = `mission-${suffix}`;
   const robotId = `robot-${suffix}`;
   const commandId = `cmd-${suffix}`;

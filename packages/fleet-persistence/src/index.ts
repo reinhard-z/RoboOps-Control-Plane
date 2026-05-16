@@ -27,6 +27,10 @@ export type {
   PostgresMigrationRunSummary,
   PsqlCommandOptions
 } from "./postgres-migration-runner.js";
+export { PostgresDomainStateRepository } from "./postgres-domain-state-repository.js";
+export type {
+  PostgresDomainStateRepositoryOptions
+} from "./postgres-domain-state-repository.js";
 export { InMemoryDomainStateRepository } from "./repository.js";
 export type {
   DomainStateMutation,

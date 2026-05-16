@@ -11,8 +11,8 @@ operator console slice for the incident demo.
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
 - `packages/fleet-persistence`: repository contract, in-memory `DomainState`
-  implementation used by the runtime today, and the Postgres migration
-  foundation for durable storage.
+  implementation used by the runtime today, Postgres migrations, and an opt-in
+  Postgres repository adapter for durable storage validation.
 - `packages/test-support`: fake clock/test helpers.
 - Domain tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: in-memory HTTP API, SSE stream, edge WebSocket gateway,
@@ -41,7 +41,7 @@ flowchart LR
     Domain["fleet-domain<br/>pure reducers"]
     Protocol["fleet-protocol<br/>contracts + schemas"]
     Api["fleet-platform<br/>HTTP/SSE/WebSocket"]
-    Persistence["fleet-persistence<br/>repository contract<br/>in-memory state<br/>Postgres migrations"]
+    Persistence["fleet-persistence<br/>repository contract<br/>in-memory state<br/>Postgres adapter + migrations"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
     UI["operator-ui<br/>local browser console"]
     Tests --> Domain
@@ -175,7 +175,8 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
   API/gateway and local edge slices are implemented.
 - Keep a single in-memory `DomainState` behind the `fleet-persistence`
   repository contract and Fleet Platform service functions. The package now
-  owns Postgres migrations, but Fleet Platform is not switched to Postgres yet.
+  owns Postgres migrations and a Postgres repository adapter, but Fleet
+  Platform is not switched to Postgres yet.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
 - Publish reducer-produced `domainEvents` and `auditEvents` to API responses/SSE.
@@ -189,7 +190,7 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
 
 ## Local Demo Wiring
 
-Optional local Postgres for schema work:
+Optional local Postgres for schema and adapter work:
 
 ```sh
 docker-compose -f infra/docker-compose/docker-compose.local.yml up -d postgres
@@ -201,6 +202,15 @@ PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistenc
 
 This database is currently for migration and schema validation only; the Fleet
 Platform runtime below still uses the in-memory repository.
+
+Run the optional Postgres-backed repository checks against a disposable local
+database:
+
+```sh
+ROBOOPS_RUN_POSTGRES_TESTS=true \
+FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence test
+```
 
 Run the Fleet Platform on its default local port. Demo admin endpoints are
 disabled unless both `DEMO_MODE=true` and `DEMO_ADMIN_TOKEN` are set:

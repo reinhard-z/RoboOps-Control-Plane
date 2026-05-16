@@ -9,6 +9,7 @@ const expectedTables = [
   "audit_events",
   "command_acks",
   "commands",
+  "domain_state_bookmarks",
   "domain_events",
   "idempotency_keys",
   "missions",
@@ -38,7 +39,11 @@ describe.skipIf(!shouldRunPostgresTests || !testDatabaseUrl)(
       const secondRun = await runPostgresMigrations(options);
 
       expect(secondRun.applied).toEqual([]);
-      expect(secondRun.skipped).toEqual(["0001_core_schema.sql"]);
+      expect(secondRun.skipped).toEqual([
+        "0001_core_schema.sql",
+        "0002_domain_state_bookmarks.sql",
+        "0003_robot_session_resolution.sql"
+      ]);
 
       const tableRows = await runPsql(
         [

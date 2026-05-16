@@ -27,7 +27,8 @@ Apply `packages/fleet-persistence` migrations after the container is healthy:
 PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence migrate:local
 ```
 
-Run the optional DB-backed schema test against a disposable local database:
+Run the optional DB-backed schema and repository adapter tests against a
+disposable local database:
 
 ```sh
 ROBOOPS_RUN_POSTGRES_TESTS=true \
