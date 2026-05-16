@@ -3,17 +3,18 @@
 Snapshot date: 2026-05-16.
 
 The important thing to know: the domain/protocol core is implemented, and
-`apps/fleet-platform` now has the first Phase 2 API/gateway slice.
+`apps/fleet-platform` now has the initial API/gateway slice.
 `apps/cloud-edge-simulator` provides the local edge process needed to drive the
 incident demo without ROS 2. `apps/operator-ui` provides the first local
 operator console slice for the incident demo.
 
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
-- `packages/fleet-persistence`: repository contract plus the in-memory
-  `DomainState` implementation used until durable storage is wired in.
+- `packages/fleet-persistence`: repository contract, in-memory `DomainState`
+  implementation used by the runtime today, and the Postgres migration
+  foundation for durable storage.
 - `packages/test-support`: fake clock/test helpers.
-- Phase 1 tests proving the incident path without API, DB, UI, or simulator.
+- Domain tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: in-memory HTTP API, SSE stream, edge WebSocket gateway,
   queued command delivery, cancel command flow, and telemetry freshness sweep.
 - `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
@@ -36,11 +37,11 @@ Read this as the current working code, not the final product.
 ```mermaid
 flowchart LR
   subgraph Implemented["Implemented now"]
-    Tests["Phase 1 tests<br/>prove behavior"]
+    Tests["Domain tests<br/>prove behavior"]
     Domain["fleet-domain<br/>pure reducers"]
     Protocol["fleet-protocol<br/>contracts + schemas"]
     Api["fleet-platform<br/>HTTP/SSE/WebSocket"]
-    Persistence["fleet-persistence<br/>repository contract<br/>in-memory state"]
+    Persistence["fleet-persistence<br/>repository contract<br/>in-memory state<br/>Postgres migrations"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
     UI["operator-ui<br/>local browser console"]
     Tests --> Domain
@@ -55,7 +56,7 @@ flowchart LR
     UI --> Api
   end
 
-  subgraph Placeholders["Scaffolded for later phases"]
+  subgraph Placeholders["Scaffolded for future capabilities"]
     Worker["event-worker"]
     Observability["observability"]
   end
@@ -64,7 +65,7 @@ flowchart LR
 The domain tests still prove the behavior at the pure reducer level. The
 fleet-platform tests now prove the first process boundary around that behavior.
 
-## Phase 2 Target
+## Platform Process Target
 
 Read this as the next architecture to build.
 
@@ -87,9 +88,9 @@ flowchart LR
   UI --> Protocol
 ```
 
-Phase 2 now has the in-memory platform, a local simulator, and a local Operator
-UI. The platform exposes REST/SSE/WebSocket edges and keeps mission decisions
-inside `fleet-domain`. Queued commands are delivered after the edge sends
+The current platform has the in-memory API, a local simulator, and a local
+Operator UI. The platform exposes REST/SSE/WebSocket edges and keeps mission
+decisions inside `fleet-domain`. Queued commands are delivered after the edge sends
 `edge.hello`, which avoids double-delivery between socket upgrade and the first
 edge identity message. The simulator connects outbound to
 `/edge/connect?robotId=...` and uses the same protocol payloads future ROS 2
@@ -168,12 +169,13 @@ import {
 
 Only domain modules should import helper files like `events.ts`, `policies.ts`, or `time.ts` directly.
 
-## Phase 2 Build Notes
+## Platform Build Notes
 
 - Continue in `apps/fleet-platform` and `apps/cloud-edge-simulator`; the first
   API/gateway and local edge slices are implemented.
 - Keep a single in-memory `DomainState` behind the `fleet-persistence`
-  repository contract and Fleet Platform service functions.
+  repository contract and Fleet Platform service functions. The package now
+  owns Postgres migrations, but Fleet Platform is not switched to Postgres yet.
 - Validate incoming command, telemetry, ack, and reconnect payloads using `fleet-protocol`.
 - Call `fleet-domain` reducers for state changes.
 - Publish reducer-produced `domainEvents` and `auditEvents` to API responses/SSE.
@@ -186,6 +188,19 @@ Only domain modules should import helper files like `events.ts`, `policies.ts`, 
   - WebSocket for edge commands, acks, telemetry, and reconnect handshakes
 
 ## Local Demo Wiring
+
+Optional local Postgres for schema work:
+
+```sh
+docker-compose -f infra/docker-compose/docker-compose.local.yml up -d postgres
+```
+
+```sh
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence migrate:local
+```
+
+This database is currently for migration and schema validation only; the Fleet
+Platform runtime below still uses the in-memory repository.
 
 Run the Fleet Platform on its default local port. Demo admin endpoints are
 disabled unless both `DEMO_MODE=true` and `DEMO_ADMIN_TOKEN` are set:

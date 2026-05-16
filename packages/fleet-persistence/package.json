@@ -14,6 +14,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
+    "migrate": "tsx src/postgres-migration-runner.ts",
+    "migrate:local": "tsx src/postgres-migration-runner.ts --local",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -22,4 +24,3 @@
     "@roboops/fleet-protocol": "workspace:*"
   }
 }
-

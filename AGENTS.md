@@ -17,6 +17,8 @@ packages, infrastructure, simulations, docs, and tests.
 - Keep cognitive load low by making control flow and data boundaries explicit.
 - Follow the existing module structure and local patterns before introducing new
   abstractions.
+- Keep roadmap labels out of durable file names, migrations, package APIs,
+  architecture docs, and UI copy. Use domain-oriented names instead.
 - Preserve TypeScript strictness and avoid weakening types to get code through
   the compiler.
 
