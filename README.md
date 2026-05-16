@@ -59,7 +59,7 @@ For the local Docker Compose database, validate the migrated repository read
 path before starting the API:
 
 ```sh
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform check:postgres:local
+pnpm --filter @roboops/fleet-platform check:postgres:local
 ```
 
 The readiness check is opt-in, read-only, and does not run migrations. It

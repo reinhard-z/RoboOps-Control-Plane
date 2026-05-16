@@ -201,14 +201,14 @@ docker-compose -f infra/docker-compose/docker-compose.local.yml up -d postgres
 ```
 
 ```sh
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence migrate:local
+pnpm --filter @roboops/fleet-persistence migrate:local
 ```
 
 Validate that the Fleet Platform Postgres runtime can reach the database and
 read the migrated repository state:
 
 ```sh
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform check:postgres:local
+pnpm --filter @roboops/fleet-platform check:postgres:local
 ```
 
 Fleet Platform does not run migrations during normal server startup. Apply the
@@ -225,7 +225,7 @@ database:
 ```sh
 ROBOOPS_RUN_POSTGRES_TESTS=true \
 FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence test
+pnpm --filter @roboops/fleet-persistence test
 ```
 
 Run the optional Fleet Platform Postgres runtime persistence check against the
@@ -235,7 +235,7 @@ before it starts the Postgres-backed runtime:
 ```sh
 ROBOOPS_RUN_POSTGRES_TESTS=true \
 FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform test
+pnpm --filter @roboops/fleet-platform test
 ```
 
 Run Fleet Platform with the default in-memory repository by leaving persistence

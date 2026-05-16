@@ -25,14 +25,14 @@ URL:      postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_cont
 Apply `packages/fleet-persistence` migrations after the container is healthy:
 
 ```sh
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence migrate:local
+pnpm --filter @roboops/fleet-persistence migrate:local
 ```
 
 Validate that Fleet Platform can read the migrated repository state before
 starting the API in Postgres mode:
 
 ```sh
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform check:postgres:local
+pnpm --filter @roboops/fleet-platform check:postgres:local
 ```
 
 This validation command is read-only. It does not apply migrations and reports
@@ -60,7 +60,7 @@ disposable local database:
 ```sh
 ROBOOPS_RUN_POSTGRES_TESTS=true \
 FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence test
+pnpm --filter @roboops/fleet-persistence test
 ```
 
 Run the optional Fleet Platform runtime persistence check against the same local
@@ -70,7 +70,7 @@ starts the Postgres-backed runtime:
 ```sh
 ROBOOPS_RUN_POSTGRES_TESTS=true \
 FLEET_PERSISTENCE_TEST_DATABASE_URL=postgres://roboops:roboops_local_password@127.0.0.1:55432/roboops_control_plane \
-PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform test
+pnpm --filter @roboops/fleet-platform test
 ```
 
 Leave `FLEET_PERSISTENCE_MODE` unset for the default in-memory local demo.
