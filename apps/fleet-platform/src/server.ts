@@ -15,6 +15,12 @@ import {
   ConsoleStructuredLogger,
   type StructuredLogger
 } from "./logging.js";
+import {
+  classifyReadinessError,
+  readinessRepositoryReadTimeoutMs,
+  repositoryReadinessCheckName,
+  runRepositoryReadinessCheck
+} from "./readiness.js";
 import { createSeededDomainState } from "./repository.js";
 import { FleetPlatformService } from "./service.js";
 import type {
@@ -28,8 +34,6 @@ import {
   parseCreateMissionRequest
 } from "./validation.js";
 import { EdgeWebSocketGateway } from "./websocket.js";
-
-const readinessRepositoryReadTimeoutMs = 2_000;
 
 /** Constructed Fleet Platform runtime used by CLI startup and integration tests. */
 export interface FleetPlatformRuntime {
@@ -402,8 +406,8 @@ async function sendReadinessResponse(
     logger.warn("persistence readiness check failed", {
       correlationId: context.correlationId,
       persistenceMode: config.persistence.mode,
-      check: "repository.read",
-      errorType: classifyError(error)
+      check: repositoryReadinessCheckName,
+      errorType: classifyReadinessError(error)
     });
     sendError(
       response,
@@ -414,7 +418,7 @@ async function sendReadinessResponse(
       context,
       {
         persistenceMode: config.persistence.mode,
-        check: "repository.read"
+        check: repositoryReadinessCheckName
       }
     );
   }
@@ -422,30 +426,7 @@ async function sendReadinessResponse(
 
 /** Bounds the readiness repository check so unavailable backing services fail fast. */
 async function readStateForReadiness(service: FleetPlatformService): Promise<void> {
-  let timeout: NodeJS.Timeout | undefined;
-  try {
-    await Promise.race([
-      service.getState(),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          reject(new ReadinessTimeoutError(readinessRepositoryReadTimeoutMs));
-        }, readinessRepositoryReadTimeoutMs);
-        timeout.unref();
-      })
-    ]);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
-}
-
-/** Internal readiness sentinel that avoids exposing raw repository error text. */
-class ReadinessTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`repository readiness check exceeded ${timeoutMs}ms`);
-    this.name = "ReadinessTimeoutError";
-  }
+  await runRepositoryReadinessCheck(() => service.getState());
 }
 
 /** Handles demo-only fault and scenario endpoints after applying demo auth gates. */
@@ -704,14 +685,6 @@ function sendError(
     }
   };
   sendJson(response, config, statusCode, body);
-}
-
-/** Classifies errors for diagnostics without leaking driver text or connection details. */
-function classifyError(error: unknown): string {
-  if (error instanceof Error && error.name.length > 0) {
-    return error.name;
-  }
-  return typeof error;
 }
 
 /** Applies permissive local CORS headers for the upcoming operator UI app. */

@@ -7,6 +7,8 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "check:postgres": "tsx src/postgres-readiness-check.ts",
+    "check:postgres:local": "tsx src/postgres-readiness-check.ts --local",
     "dev": "tsx watch src/index.ts",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -19,4 +21,3 @@
     "@roboops/observability": "workspace:*"
   }
 }
-

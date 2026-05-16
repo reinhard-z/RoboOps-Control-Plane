@@ -204,11 +204,20 @@ docker-compose -f infra/docker-compose/docker-compose.local.yml up -d postgres
 PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence migrate:local
 ```
 
+Validate that the Fleet Platform Postgres runtime can reach the database and
+read the migrated repository state:
+
+```sh
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform check:postgres:local
+```
+
 Fleet Platform does not run migrations during normal server startup. Apply the
 migrations before starting the platform in Postgres mode.
 
 In Postgres mode, `/health/ready` returns `503` with a sanitized structured
 error if the database is unavailable or the migrations have not been applied.
+The manual readiness command uses the same repository read path and also keeps
+database URLs, credentials, and raw driver text out of user-facing output.
 
 Run the optional Postgres-backed repository checks against a disposable local
 database:

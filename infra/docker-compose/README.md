@@ -28,6 +28,17 @@ Apply `packages/fleet-persistence` migrations after the container is healthy:
 PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-persistence migrate:local
 ```
 
+Validate that Fleet Platform can read the migrated repository state before
+starting the API in Postgres mode:
+
+```sh
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform check:postgres:local
+```
+
+This validation command is read-only. It does not apply migrations and reports
+sanitized diagnostics if the database is unavailable or the repository schema is
+not ready.
+
 Fleet Platform defaults to the in-memory repository. To run it against this
 local Postgres database, first apply migrations, then start the platform with
 both persistence env vars:

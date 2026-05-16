@@ -55,6 +55,15 @@ pnpm --filter @roboops/fleet-platform dev
 Fleet Platform uses in-memory persistence by default. To opt into Postgres,
 apply the `@roboops/fleet-persistence` migrations first, then set
 `FLEET_PERSISTENCE_MODE=postgres` and `FLEET_PERSISTENCE_DATABASE_URL`.
+For the local Docker Compose database, validate the migrated repository read
+path before starting the API:
+
+```sh
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm --filter @roboops/fleet-platform check:postgres:local
+```
+
+The readiness check is opt-in, read-only, and does not run migrations. It
+prints sanitized diagnostics if the database is unavailable or not migrated.
 
 Or start it with protected demo reset/control endpoints enabled:
 
