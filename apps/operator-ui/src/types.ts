@@ -3,6 +3,7 @@ import type {
   MissionId,
   MissionLifecycleState,
   MissionOperationalStatus,
+  Pose2D,
   RobotConnectionState,
   RobotHealthState,
   RobotId
@@ -13,6 +14,7 @@ export interface RobotSnapshot {
   readonly robotId: RobotId;
   readonly connectionState: RobotConnectionState;
   readonly updatedAt: string;
+  readonly pose?: Pose2D;
   readonly health?: RobotHealthState;
   readonly batteryPercent?: number;
   readonly activeMissionId?: MissionId;
@@ -29,6 +31,7 @@ export interface MissionSnapshot {
   readonly robotId: RobotId;
   readonly lifecycleState: MissionLifecycleState;
   readonly operationalStatus: MissionOperationalStatus;
+  readonly targetPose?: Pose2D;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly currentCommandId?: CommandId;
@@ -64,3 +67,5 @@ export interface PoseTarget {
   readonly y: number;
   readonly theta: number;
 }
+
+export type { Pose2D };

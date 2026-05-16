@@ -189,4 +189,4 @@ domain state machine, a Fleet Platform API/WebSocket gateway with in-memory
 persistence by default and explicit Postgres opt-in, and a local cloud-edge
 simulator. `apps/operator-ui` now provides a lightweight local operator console
 for creating/cancelling missions and watching robot freshness, mission state,
-and audit events without curl.
+robot pose/target movement, and audit events without curl.

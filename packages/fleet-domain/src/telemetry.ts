@@ -52,6 +52,7 @@ export function ingestRobotTelemetry(
   const nextRobot: RobotSnapshot = {
     robotId: telemetry.robotId,
     connectionState: telemetry.connectionState,
+    pose: telemetry.pose,
     health: telemetry.health,
     batteryPercent: telemetry.batteryPercent,
     updatedAt: telemetry.receivedAt,
@@ -107,6 +108,7 @@ export function ingestRobotTelemetry(
       robotId: telemetry.robotId,
       batteryPercent: telemetry.batteryPercent,
       connectionState: telemetry.connectionState,
+      pose: telemetry.pose,
       currentMissionId: telemetry.currentMissionId ?? null
     }
   });

@@ -94,6 +94,47 @@ export function renderOperatorUiDocument(config: OperatorUiConfig): string {
           <p id="action-message" class="action-message" role="status"></p>
         </section>
 
+        <section class="panel map-panel" aria-labelledby="map-heading">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Virtual Map</p>
+              <h2 id="map-heading">Robot Pose</h2>
+            </div>
+            <span id="map-status" class="status-pill tone-neutral">WAITING</span>
+          </div>
+          <div id="map-frame" class="map-frame tone-neutral">
+            <svg id="robot-map" class="robot-map" viewBox="0 0 100 100" role="img" aria-labelledby="map-heading">
+              <line class="map-grid-line" x1="25" y1="0" x2="25" y2="100"></line>
+              <line class="map-grid-line" x1="50" y1="0" x2="50" y2="100"></line>
+              <line class="map-grid-line" x1="75" y1="0" x2="75" y2="100"></line>
+              <line class="map-grid-line" x1="0" y1="25" x2="100" y2="25"></line>
+              <line class="map-grid-line" x1="0" y1="50" x2="100" y2="50"></line>
+              <line class="map-grid-line" x1="0" y1="75" x2="100" y2="75"></line>
+              <line id="map-target-line" class="map-target-line" x1="50" y1="50" x2="50" y2="50" style="display: none"></line>
+              <polyline id="map-trail" class="map-trail" points=""></polyline>
+              <g id="map-target-marker" class="map-target-marker" transform="translate(50 50)" style="display: none">
+                <circle r="3.5"></circle>
+                <line x1="-6" y1="0" x2="6" y2="0"></line>
+                <line x1="0" y1="-6" x2="0" y2="6"></line>
+              </g>
+              <g id="map-robot-marker" class="map-robot-marker" transform="translate(50 50)" style="display: none">
+                <circle r="4.5"></circle>
+                <line id="map-robot-heading" class="map-robot-heading" x1="0" y1="0" x2="8" y2="0"></line>
+              </g>
+            </svg>
+          </div>
+          <dl class="map-readout">
+            <div>
+              <dt>Pose</dt>
+              <dd id="map-pose">No telemetry pose</dd>
+            </div>
+            <div>
+              <dt>Target</dt>
+              <dd id="map-target">No active target</dd>
+            </div>
+          </dl>
+        </section>
+
         <section class="panel missions-panel" aria-labelledby="missions-heading">
           <div class="panel-header">
             <div>

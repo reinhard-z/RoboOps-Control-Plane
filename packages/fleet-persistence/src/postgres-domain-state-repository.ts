@@ -14,6 +14,7 @@ import type {
   AuditEventV1,
   CommandEnvelopeV1,
   EventEnvelopeV1,
+  Pose2D,
   RobotId
 } from "@roboops/fleet-protocol";
 
@@ -711,6 +712,7 @@ interface RobotRow extends QueryResultRow {
   readonly last_acknowledged_command_id: string | null;
   readonly last_seen_command_sequence: number | string;
   readonly edge_agent_version: string | null;
+  readonly snapshot_json: unknown;
   readonly updated_at: Date | string;
 }
 
@@ -723,17 +725,22 @@ async function readRobots(
       "SELECT robot_id, connection_state, health, battery_percent, active_mission_id,",
       "  last_telemetry_observed_at, last_telemetry_received_at,",
       "  last_acknowledged_command_id, last_seen_command_sequence,",
-      "  edge_agent_version, updated_at",
+      "  edge_agent_version, snapshot_json, updated_at",
       `FROM ${tableNames.robots}`,
       "ORDER BY robot_id"
     ].join("\n")
   );
   const robots: Record<string, RobotSnapshot> = {};
   for (const row of result.rows) {
+    const snapshot = readJsonObject<Partial<RobotSnapshot>>(
+      row.snapshot_json,
+      `robot snapshot ${row.robot_id}`
+    );
     robots[row.robot_id] = {
       robotId: row.robot_id,
       connectionState: row.connection_state as RobotSnapshot["connectionState"],
       updatedAt: toIsoTimestamp(row.updated_at),
+      ...(isPose2D(snapshot.pose) ? { pose: snapshot.pose } : {}),
       ...(row.health !== null
         ? { health: row.health as NonNullable<RobotSnapshot["health"]> }
         : {}),
@@ -770,6 +777,7 @@ interface MissionRow extends QueryResultRow {
   readonly last_acknowledged_command_sequence: number | string | null;
   readonly idempotency_key: string | null;
   readonly failure_reason: string | null;
+  readonly snapshot_json: unknown;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
 }
@@ -783,18 +791,23 @@ async function readMissions(
       "SELECT mission_id, robot_id, lifecycle_state, operational_status,",
       "  current_command_id, last_command_sequence,",
       "  last_acknowledged_command_id, last_acknowledged_command_sequence,",
-      "  idempotency_key, failure_reason, created_at, updated_at",
+      "  idempotency_key, failure_reason, snapshot_json, created_at, updated_at",
       `FROM ${tableNames.missions}`,
       "ORDER BY mission_id"
     ].join("\n")
   );
   const missions: Record<string, MissionSnapshot> = {};
   for (const row of result.rows) {
+    const snapshot = readJsonObject<Partial<MissionSnapshot>>(
+      row.snapshot_json,
+      `mission snapshot ${row.mission_id}`
+    );
     missions[row.mission_id] = {
       missionId: row.mission_id,
       robotId: row.robot_id,
       lifecycleState: row.lifecycle_state as MissionSnapshot["lifecycleState"],
       operationalStatus: row.operational_status as MissionSnapshot["operationalStatus"],
+      ...(isPose2D(snapshot.targetPose) ? { targetPose: snapshot.targetPose } : {}),
       createdAt: toIsoTimestamp(row.created_at),
       updatedAt: toIsoTimestamp(row.updated_at),
       ...(row.current_command_id !== null
@@ -1072,6 +1085,18 @@ function readJsonObject<TValue>(value: unknown, description: string): TValue {
     throw new Error(`Expected ${description} to be a JSON object`);
   }
   return value as TValue;
+}
+
+/** Checks optional snapshot coordinates before restoring them from jsonb. */
+function isPose2D(value: unknown): value is Pose2D {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Number.isFinite((value as { readonly x?: unknown }).x) &&
+    Number.isFinite((value as { readonly y?: unknown }).y) &&
+    Number.isFinite((value as { readonly theta?: unknown }).theta)
+  );
 }
 
 /** Reads and validates the robot sequence map from jsonb metadata. */

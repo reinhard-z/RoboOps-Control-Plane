@@ -21,6 +21,7 @@ function createDemoRobot(robotId: string, timestamp: string): RobotSnapshot {
     robotId,
     connectionState: "ONLINE",
     updatedAt: timestamp,
+    pose: { x: 0, y: 0, theta: 0 },
     health: "OK",
     batteryPercent: 80,
     lastTelemetryObservedAt: timestamp,

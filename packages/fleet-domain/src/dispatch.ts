@@ -8,6 +8,7 @@ import {
   type IdempotencyKey,
   type IsoTimestamp,
   type MissionId,
+  type Pose2D,
   type ProtocolValidationIssue,
   type RobotId,
   type SafetyClass,
@@ -229,11 +230,13 @@ export function dispatchMissionCommand(
     payload: input.payload
   };
 
+  const targetPose = targetPoseForCommand(input.type, input.payload);
   const mission: MissionSnapshot = {
     missionId: input.missionId,
     robotId: input.robotId,
     lifecycleState: "DISPATCHED",
     operationalStatus: "NOMINAL",
+    ...(targetPose ? { targetPose } : {}),
     createdAt: input.now,
     updatedAt: input.now,
     currentCommandId: input.commandId,
@@ -384,11 +387,13 @@ function rejectDispatch(
   details: Record<string, unknown>,
   issues?: readonly ProtocolValidationIssue[]
 ): DomainTransition<DispatchMissionResult> {
+  const targetPose = targetPoseForCommand(input.type, input.payload);
   const mission: MissionSnapshot = {
     missionId: input.missionId,
     robotId: input.robotId,
     lifecycleState,
     operationalStatus: "DEGRADED",
+    ...(targetPose ? { targetPose } : {}),
     createdAt: input.now,
     updatedAt: input.now,
     idempotencyKey: input.idempotencyKey,
@@ -445,6 +450,31 @@ function rejectDispatch(
     auditEvents: [audit],
     domainEvents: [event]
   };
+}
+
+/** Extracts the GO_TO_POSE target for snapshots that drive the operator map. */
+function targetPoseForCommand(
+  type: CommandType,
+  payload: CommandPayload
+): Pose2D | undefined {
+  if (type !== "GO_TO_POSE") {
+    return undefined;
+  }
+
+  const target = (payload as { readonly target?: unknown }).target;
+  return isPose2D(target) ? target : undefined;
+}
+
+/** Validates protocol pose shape before copying optional target data into snapshots. */
+function isPose2D(value: unknown): value is Pose2D {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Number.isFinite((value as { readonly x?: unknown }).x) &&
+    Number.isFinite((value as { readonly y?: unknown }).y) &&
+    Number.isFinite((value as { readonly theta?: unknown }).theta)
+  );
 }
 
 /** Produces the canonical idempotency comparison payload for operator requests. */

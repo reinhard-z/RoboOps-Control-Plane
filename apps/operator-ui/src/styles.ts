@@ -171,8 +171,34 @@ button:hover:not(:disabled) {
 
 .robot-panel,
 .command-panel,
+.map-panel,
 .mission-detail-panel {
   align-self: start;
+}
+
+.robot-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.command-panel {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.map-panel {
+  grid-column: 1 / span 2;
+  grid-row: 2;
+}
+
+.missions-panel {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.mission-detail-panel {
+  grid-column: 2;
+  grid-row: 3;
 }
 
 .event-panel {
@@ -320,6 +346,120 @@ dd small {
 
 .action-message.error {
   color: var(--danger-text);
+}
+
+.map-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.08), transparent 45%),
+    #f8fafc;
+}
+
+.map-frame.tone-degraded,
+.map-frame.tone-stale {
+  border-color: #f59e0b;
+  background:
+    linear-gradient(135deg, rgba(245, 158, 11, 0.12), transparent 46%),
+    #fffaf0;
+}
+
+.map-frame.tone-reconnecting {
+  border-color: #60a5fa;
+  background:
+    linear-gradient(135deg, rgba(96, 165, 250, 0.16), transparent 46%),
+    #eff6ff;
+}
+
+.map-frame.tone-offline,
+.map-frame.tone-danger {
+  border-color: #fca5a5;
+  background:
+    linear-gradient(135deg, rgba(185, 28, 28, 0.1), transparent 46%),
+    #fff7f7;
+}
+
+.robot-map {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.map-grid-line {
+  stroke: rgba(97, 112, 134, 0.2);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-target-line {
+  stroke: rgba(97, 112, 134, 0.42);
+  stroke-dasharray: 3 3;
+  stroke-linecap: round;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-trail {
+  fill: none;
+  stroke: #475569;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  opacity: 0.68;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-target-marker circle,
+.map-target-marker line {
+  fill: #ffffff;
+  stroke: #b45309;
+  stroke-linecap: round;
+  stroke-width: 1.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-robot-marker circle {
+  fill: #16a34a;
+  stroke: #ffffff;
+  stroke-width: 2;
+  filter: drop-shadow(0 2px 3px rgba(15, 23, 42, 0.28));
+  vector-effect: non-scaling-stroke;
+}
+
+.map-robot-marker.tone-stale circle {
+  fill: #d97706;
+}
+
+.map-robot-marker.tone-degraded circle,
+.map-robot-marker.tone-danger circle {
+  fill: #ea580c;
+}
+
+.map-robot-marker.tone-reconnecting circle {
+  fill: #2563eb;
+}
+
+.map-robot-marker.tone-offline circle {
+  fill: #64748b;
+}
+
+.map-robot-heading {
+  stroke: #0f172a;
+  stroke-linecap: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.map-readout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 14px 0 0;
 }
 
 .demo-controls {
@@ -474,6 +614,19 @@ dd small {
     grid-row: auto;
     min-height: 360px;
   }
+
+  .robot-panel,
+  .command-panel,
+  .map-panel,
+  .missions-panel,
+  .mission-detail-panel {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .map-panel {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 720px) {
@@ -497,7 +650,8 @@ dd small {
 
   .console-grid,
   .metric-grid,
-  .detail-grid {
+  .detail-grid,
+  .map-readout {
     grid-template-columns: 1fr;
   }
 }

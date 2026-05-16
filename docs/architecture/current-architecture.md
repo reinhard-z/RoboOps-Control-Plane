@@ -31,7 +31,8 @@ operator console slice for the incident demo.
   sends heartbeats, and can simulate stale telemetry or reconnect handshakes.
 - `apps/operator-ui`: lightweight TypeScript browser app served by a tiny local
   Node server. It reads Fleet Platform REST state, subscribes to `/stream/events`,
-  creates `GO_TO_POSE` missions, cancels selected missions, and highlights
+  creates `GO_TO_POSE` missions, cancels selected missions, renders a virtual
+  robot map from telemetry pose and mission target snapshots, and highlights
   `ONLINE`, `STALE`, `DEGRADED`, `OFFLINE`, and `RECONNECTING` states. Local
   demo controls are rendered only when explicitly configured with demo mode and
   a demo admin token. Mission creation is disabled while the robot already has

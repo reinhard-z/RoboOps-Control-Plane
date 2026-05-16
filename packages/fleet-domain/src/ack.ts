@@ -116,6 +116,7 @@ export function applyCommandAck(
         robotId: currentRobot.robotId,
         connectionState: "ONLINE",
         updatedAt: now,
+        ...(currentRobot.pose ? { pose: currentRobot.pose } : {}),
         ...(currentRobot.health ? { health: currentRobot.health } : {}),
         ...(currentRobot.batteryPercent !== undefined
           ? { batteryPercent: currentRobot.batteryPercent }

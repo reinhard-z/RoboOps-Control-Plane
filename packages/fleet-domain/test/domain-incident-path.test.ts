@@ -40,6 +40,11 @@ describe("domain incident path", () => {
     state = dispatch.state;
     expect(dispatch.result.command.sequence).toBe(1);
     expect(dispatch.result.mission.lifecycleState).toBe("DISPATCHED");
+    expect(dispatch.result.mission.targetPose).toEqual({
+      x: 2,
+      y: 4.5,
+      theta: 1.57
+    });
 
     const ack = applyCommandAck(
       state,
@@ -179,6 +184,10 @@ describe("domain incident path", () => {
 
     const first = ingestRobotTelemetry(state, telemetry);
     expect(first.result.status).toBe("PROCESSED");
+    if (first.result.status !== "PROCESSED") {
+      throw new Error("expected telemetry to be processed");
+    }
+    expect(first.result.robot.pose).toEqual(telemetry.pose);
 
     const duplicate = ingestRobotTelemetry(first.state, telemetry);
     expect(duplicate.result.status).toBe("DUPLICATE_IGNORED");

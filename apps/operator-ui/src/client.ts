@@ -1,5 +1,9 @@
 import { FleetPlatformApiClient } from "./api-client.js";
 import {
+  appendRobotPoseTrail,
+  createRobotMapModel
+} from "./map-view-model.js";
+import {
   renderActionMessage,
   renderMissionRows,
   renderSelectedMissionDetails
@@ -24,6 +28,7 @@ import {
 import type {
   MissionSnapshot,
   PlatformStreamEvent,
+  Pose2D,
   PoseTarget,
   RobotSnapshot
 } from "./types.js";
@@ -48,6 +53,7 @@ interface BrowserOperatorConfig {
 interface AppState {
   robot: RobotSnapshot | undefined;
   missions: readonly MissionSnapshot[];
+  poseTrail: readonly Pose2D[];
   selectedMissionId: string | undefined;
   events: readonly EventSummary[];
   streamState: "CONNECTING" | "OPEN" | "RECONNECTING";
@@ -75,6 +81,14 @@ interface ViewRefs {
   readonly robotTelemetryAge: HTMLElement;
   readonly robotTelemetryTime: HTMLElement;
   readonly robotAgent: HTMLElement;
+  readonly mapFrame: HTMLElement;
+  readonly mapStatus: HTMLElement;
+  readonly mapPose: HTMLElement;
+  readonly mapTarget: HTMLElement;
+  readonly mapTrail: SVGPolylineElement;
+  readonly mapTargetLine: SVGLineElement;
+  readonly mapTargetMarker: SVGGElement;
+  readonly mapRobotMarker: SVGGElement;
   readonly missionForm: HTMLFormElement;
   readonly targetX: HTMLInputElement;
   readonly targetY: HTMLInputElement;
@@ -106,6 +120,7 @@ const api = new FleetPlatformApiClient({
 const state: AppState = {
   robot: undefined,
   missions: [],
+  poseTrail: [],
   selectedMissionId: undefined,
   events: [],
   streamState: "CONNECTING",
@@ -161,6 +176,7 @@ async function refreshSnapshot(): Promise<void> {
     ]);
 
     state.robot = robot;
+    state.poseTrail = appendRobotPoseTrail(state.poseTrail, robot.pose);
     state.missions = sortMissions(missions);
     const selected = selectDefaultMission(
       state.missions,
@@ -262,6 +278,7 @@ async function resetDemoState(): Promise<void> {
     await api.resetDemoState();
     state.selectedMissionId = undefined;
     state.events = [];
+    state.poseTrail = [];
     state.actionMessage = "Demo state reset";
     await refreshSnapshot();
   } catch (error) {
@@ -283,6 +300,7 @@ async function startCleanDemoMission(): Promise<void> {
   try {
     await api.resetDemoState();
     state.events = [];
+    state.poseTrail = [];
     state.selectedMissionId = undefined;
     const body = await api.startIncidentDemo();
     if (body.result.mission) {
@@ -394,6 +412,7 @@ function render(): void {
   renderRobot();
   renderMissions();
   renderMissionDetails();
+  renderRobotMap();
   renderEvents();
   renderActionState();
 }
@@ -444,6 +463,50 @@ function renderMissions(): void {
 /** Renders lifecycle, operational status, current command, and ack progress. */
 function renderMissionDetails(): void {
   renderSelectedMissionDetails(refs, selectedMission());
+}
+
+/** Renders the telemetry-driven virtual robot map and active mission target. */
+function renderRobotMap(): void {
+  const model = createRobotMapModel(state.robot, selectedMission(), state.poseTrail);
+  setStatusPill(refs.mapStatus, model.statusLabel, model.statusTone);
+  refs.mapPose.textContent = model.poseLabel;
+  refs.mapTarget.textContent = model.targetLabel;
+  refs.mapFrame.className = `map-frame tone-${model.statusTone}`;
+  refs.mapTrail.setAttribute("points", model.trailPoints);
+
+  if (model.robot) {
+    refs.mapRobotMarker.setAttribute(
+      "transform",
+      `translate(${model.robot.point.x} ${model.robot.point.y}) rotate(${model.robot.headingDegrees})`
+    );
+    refs.mapRobotMarker.setAttribute(
+      "class",
+      `map-robot-marker tone-${model.statusTone}`
+    );
+    setSvgVisible(refs.mapRobotMarker, true);
+  } else {
+    setSvgVisible(refs.mapRobotMarker, false);
+  }
+
+  if (model.robot && model.target) {
+    refs.mapTargetLine.setAttribute("x1", String(model.robot.point.x));
+    refs.mapTargetLine.setAttribute("y1", String(model.robot.point.y));
+    refs.mapTargetLine.setAttribute("x2", String(model.target.point.x));
+    refs.mapTargetLine.setAttribute("y2", String(model.target.point.y));
+    setSvgVisible(refs.mapTargetLine, true);
+  } else {
+    setSvgVisible(refs.mapTargetLine, false);
+  }
+
+  if (model.target) {
+    refs.mapTargetMarker.setAttribute(
+      "transform",
+      `translate(${model.target.point.x} ${model.target.point.y})`
+    );
+    setSvgVisible(refs.mapTargetMarker, true);
+  } else {
+    setSvgVisible(refs.mapTargetMarker, false);
+  }
 }
 
 /** Renders the bounded live event feed. */
@@ -560,6 +623,11 @@ function setStatusPill(element: HTMLElement, label: string, tone: StatusTone): v
   element.className = `status-pill tone-${tone}`;
 }
 
+/** Toggles SVG elements without relying on HTMLElement-only hidden semantics. */
+function setSvgVisible(element: SVGElement, visible: boolean): void {
+  element.style.display = visible ? "" : "none";
+}
+
 /** Parses the JSON data payload from an SSE browser event. */
 function parseStreamEvent(value: string): PlatformStreamEvent | undefined {
   try {
@@ -628,6 +696,14 @@ function collectViewRefs(): ViewRefs {
     robotTelemetryAge: requiredElement("robot-telemetry-age"),
     robotTelemetryTime: requiredElement("robot-telemetry-time"),
     robotAgent: requiredElement("robot-agent"),
+    mapFrame: requiredElement("map-frame"),
+    mapStatus: requiredElement("map-status"),
+    mapPose: requiredElement("map-pose"),
+    mapTarget: requiredElement("map-target"),
+    mapTrail: requiredElement<SVGPolylineElement>("map-trail"),
+    mapTargetLine: requiredElement<SVGLineElement>("map-target-line"),
+    mapTargetMarker: requiredElement<SVGGElement>("map-target-marker"),
+    mapRobotMarker: requiredElement<SVGGElement>("map-robot-marker"),
     missionForm: requiredElement<HTMLFormElement>("mission-form"),
     targetX: requiredElement<HTMLInputElement>("target-x"),
     targetY: requiredElement<HTMLInputElement>("target-y"),
@@ -653,18 +729,18 @@ function collectViewRefs(): ViewRefs {
 }
 
 /** Reads an optional DOM node when demo-only controls are not rendered. */
-function optionalElement<T extends HTMLElement>(id: string): T | undefined {
+function optionalElement<T extends Element = HTMLElement>(id: string): T | undefined {
   const element = document.getElementById(id);
-  return element ? element as T : undefined;
+  return element ? element as unknown as T : undefined;
 }
 
 /** Returns a typed DOM element or fails fast for broken HTML templates. */
-function requiredElement<T extends HTMLElement>(id: string): T {
+function requiredElement<T extends Element = HTMLElement>(id: string): T {
   const element = document.getElementById(id);
   if (!element) {
     throw new Error(`missing required element #${id}`);
   }
-  return element as T;
+  return element as unknown as T;
 }
 
 /** Validates injected demo config before enabling protected UI actions. */

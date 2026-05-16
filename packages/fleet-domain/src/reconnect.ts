@@ -165,6 +165,7 @@ export function processReconnectHandshake(
     connectionState:
       reconciliation.outcome === "MANUAL_REVIEW" ? "DEGRADED" : "ONLINE",
     updatedAt: decidedAt,
+    ...(robot?.pose ? { pose: robot.pose } : {}),
     ...(robot?.health ? { health: robot.health } : {}),
     ...(robot?.batteryPercent !== undefined
       ? { batteryPercent: robot.batteryPercent }
