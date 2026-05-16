@@ -92,7 +92,7 @@ use `latest`.
 
 The hosted simulator demo runs `apps/cloud-edge-simulator` as a cloud-friendly
 fake edge process so reviewers can exercise the incident scenario without ROS2,
-Gazebo, robot hardware, or node-local networking.
+Isaac Sim, robot hardware, or node-local networking.
 
 This reference is for a robot-near runtime. It assumes the agent runs close to
 the ROS2 environment and opens the same outbound Fleet Platform edge channel as

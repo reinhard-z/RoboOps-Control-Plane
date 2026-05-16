@@ -8,7 +8,7 @@ Platform protocol:
 - Fleet Platform remains the cloud control-plane boundary at
   `/edge/connect?robotId=...`;
 - no direct cloud-to-ROS2/DDS bridge is started;
-- no navigation, SLAM, Gazebo scenario, Kubernetes rollout, or hosted robot
+- no navigation, SLAM, Isaac Sim scenario, Kubernetes rollout, or hosted robot
   deployment is implemented in this slice.
 
 The TypeScript package `packages/fleet-protocol` remains the source of truth
@@ -121,7 +121,7 @@ package or that workflow changes.
 ## Current Limitations
 
 - No WebSocket client is implemented yet.
-- No ROS2 publishers, subscribers, actions, navigation, SLAM, or Gazebo scenario
+- No ROS2 publishers, subscribers, actions, navigation, SLAM, or Isaac Sim scenario
   are implemented yet.
 - No cloud process talks directly to ROS2 or DDS.
 - Protocol parsing from live platform commands is represented by typed C++

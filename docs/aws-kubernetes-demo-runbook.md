@@ -18,7 +18,7 @@ The hosted AWS demo uses:
 - cloud-edge simulator as the demo robot.
 
 The simulator is the demo robot. It is not real hardware, not a hosted ROS2
-robot, and not a Gazebo or physical navigation stack.
+robot, and not a physical navigation stack.
 
 GitOps, when used, deploys software versions and configuration to Kubernetes.
 Fleet Platform dispatches missions. ArgoCD does not control robot motion.

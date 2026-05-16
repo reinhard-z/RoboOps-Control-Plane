@@ -1,8 +1,8 @@
 # Local Incident Demo Script
 
 This script is the reviewer walkthrough for the local incident flow. It uses a
-simulated robot so the full stack can run without ROS2, DDS, Gazebo, real
-hardware, or a hosted robot.
+simulated robot so the full stack can run without ROS2, DDS, real hardware, or
+a hosted robot.
 
 ## Scope
 

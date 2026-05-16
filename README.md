@@ -25,7 +25,7 @@ operator creates mission
 | Cloud-edge simulator | Implemented local robot simulator for command ack, telemetry, stale telemetry, disconnect, reconnect, and simple pose movement. This is the default reviewer demo robot. |
 | Operator UI | Implemented lightweight browser console for mission creation/cancel, robot freshness, mission state, map movement, demo fault controls, and event timeline. |
 | Event worker | Implemented outbox publisher worker for durable Postgres-backed runs. |
-| ROS2 edge agent | Skeleton only. It mirrors protocol/configuration shape but does not yet connect to WebSocket, ROS2 topics/actions, navigation, SLAM, Gazebo, or hardware. |
+| ROS2 edge agent | Skeleton only. It mirrors protocol/configuration shape but does not yet connect to WebSocket, ROS2 topics/actions, navigation, SLAM, Isaac Sim, or hardware. |
 | Kubernetes/GitOps | Production-reference manifests and rollout notes only. They document deploy patterns for software versions, not robot mission control. |
 
 ## Boundaries
