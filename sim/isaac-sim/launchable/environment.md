@@ -10,14 +10,14 @@ driver, or disk choices.
 
 Minimum expectations:
 
-| Requirement | Target |
-| --- | --- |
-| OS | Linux x86_64 managed by the Launchable |
-| GPU | RTX-capable NVIDIA GPU with RT cores |
-| Runtime | Docker Compose from `isaac-sim/isaac-launchable` |
-| Isaac Sim | Upstream Launchable version, currently documented as `5.1` |
-| Isaac Lab | Upstream Launchable version, currently documented as `2.3` |
-| ROS2 | Use Isaac's bundled bridge; use Humble CLI tools on the Jammy Brev host |
+| Requirement | Target                                                                  |
+| ----------- | ----------------------------------------------------------------------- |
+| OS          | Linux x86_64 managed by the Launchable                                  |
+| GPU         | RTX-capable NVIDIA GPU with RT cores                                    |
+| Runtime     | Docker Compose from `isaac-sim/isaac-launchable`                        |
+| Isaac Sim   | Upstream Launchable version, currently documented as `5.1`              |
+| Isaac Lab   | Upstream Launchable version, currently documented as `2.3`              |
+| ROS2        | Use Isaac's bundled bridge; use Humble CLI tools on the Jammy Brev host |
 
 ## Workspace Layout
 
@@ -32,13 +32,13 @@ Keep the upstream Launchable and RoboOps as sibling checkouts:
 
 `sim/isaac-sim/launchable/setup.sh` supports these overrides:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `WORKSPACE_DIR` | `$HOME` | Parent directory for checkouts |
-| `ISAAC_LAUNCHABLE_REPO` | `https://github.com/isaac-sim/isaac-launchable.git` | Upstream template repo |
-| `ISAAC_LAUNCHABLE_DIR` | `$HOME/isaac-launchable` | Upstream checkout path |
-| `ROBOOPS_DIR` | `$HOME/RoboOps-Control-Plane` | RoboOps checkout path |
-| `ROBOOPS_REPO_URL` | unset | Optional clone URL for this repo |
+| Variable                | Default                                             | Purpose                          |
+| ----------------------- | --------------------------------------------------- | -------------------------------- |
+| `WORKSPACE_DIR`         | `$HOME`                                             | Parent directory for checkouts   |
+| `ISAAC_LAUNCHABLE_REPO` | `https://github.com/isaac-sim/isaac-launchable.git` | Upstream template repo           |
+| `ISAAC_LAUNCHABLE_DIR`  | `$HOME/isaac-launchable`                            | Upstream checkout path           |
+| `ROBOOPS_DIR`           | `$HOME/RoboOps-Control-Plane`                       | RoboOps checkout path            |
+| `ROBOOPS_REPO_URL`      | unset                                               | Optional clone URL for this repo |
 
 Do not put tokens, passwords, or private registry credentials in committed
 Launchable scripts. Configure secrets through Brev or the shell session.
@@ -47,9 +47,9 @@ Launchable scripts. Configure secrets through Brev or the shell session.
 
 The tested Launchable used two Ubuntu environments:
 
-| Environment | User | OS | Notes |
-| --- | --- | --- | --- |
-| Brev host over SSH | `ubuntu` | Ubuntu 22.04 Jammy | Has `sudo`; install ROS2 CLI tools here |
+| Environment               | User        | OS                 | Notes                                               |
+| ------------------------- | ----------- | ------------------ | --------------------------------------------------- |
+| Brev host over SSH        | `ubuntu`    | Ubuntu 22.04 Jammy | Has `sudo`; install ROS2 CLI tools here             |
 | Browser VS Code container | `isaac-sim` | Ubuntu 24.04 Noble | Has Isaac Sim and the bundled bridge, but no `sudo` |
 
 Do not install ROS2 Jazzy packages on the Jammy host. Jazzy packages target

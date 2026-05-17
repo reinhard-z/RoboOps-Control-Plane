@@ -1,16 +1,13 @@
 # Isaac ROS2 Sidecar Probe
 
-This is the next bounded spike after the first Brev run. The first run proved
-that the Brev host can discover Isaac ROS2 topics, but host-side `ros2 topic
-echo` and `ros2 topic hz` did not receive samples. Do not repeat that path.
+This records the working ROS2 probe path after the first Brev run. The Brev
+host and ad hoc `docker run` sidecars could discover Isaac ROS2 topics, but
+`ros2 topic echo` and `ros2 topic hz` did not receive samples until Isaac and
+the probe used the same Fast DDS UDP profile.
 
 ## Goal
 
-Run the RoboOps ROS2 probe close to Isaac Sim, either:
-
-1. inside the Launchable's browser VS Code / `vscode` container; or
-2. in a Compose-managed ROS2 sidecar that shares the Launchable network settings.
-
+Run the RoboOps ROS2 probe in a Compose-managed ROS2 sidecar beside Isaac Sim.
 The goal is one sample from `/clock` and one pose source, preferably
 `/chassis/odom`, with `/tf` as fallback.
 
@@ -18,26 +15,96 @@ The goal is one sample from `/clock` and one pose source, preferably
 
 1. Start a fresh Isaac Launchable.
 2. Open browser VS Code.
-3. Start Isaac Sim:
+3. Add the Fast DDS/sidecar override from the "Working Compose Sidecar" section.
+4. Recreate the Launchable services.
+5. Start Isaac Sim from the browser VS Code terminal:
 
 ```sh
 ACCEPT_EULA=y /isaac-sim/runheadless.sh
 ```
 
-4. Open `/viewer`.
-5. Load the Nova Carter ROS scene.
-6. Confirm topic discovery from the Brev host if needed:
+6. Open `/viewer`.
+7. Load the Nova Carter ROS scene and press Play.
+8. Run the Compose probe from the Brev host:
 
 ```sh
-source /opt/ros/humble/setup.bash
-ros2 topic list | sort
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe
 ```
 
-7. Run the sidecar wrapper from the Brev host:
+## Working Compose Sidecar
+
+Create the Fast DDS UDP profile in the upstream Launchable checkout:
 
 ```sh
-cd ~/RoboOps-Control-Plane
-sim/isaac-sim/scripts/run-ros2-sidecar-probe.sh
+cd ~/isaac-launchable/isaac-lab
+
+cat > roboops-fastdds.xml <<'EOF'
+<?xml version="1.0" encoding="UTF-8" ?>
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>UdpTransport</transport_id>
+      <type>UDPv4</type>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="udp_transport_profile" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>UdpTransport</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>
+EOF
+```
+
+Then create `docker-compose.override.yml` in the same directory:
+
+```yaml
+services:
+  vscode:
+    image: isaac-lab-vscode
+    ipc: shareable
+    volumes:
+      - ./roboops-fastdds.xml:/etc/roboops/fastdds.xml:ro
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      FASTRTPS_DEFAULT_PROFILES_FILE: /etc/roboops/fastdds.xml
+
+  nginx:
+    image: isaac-lab-nginx
+
+  ros2-probe:
+    image: osrf/ros:humble-desktop
+    profiles:
+      - probe
+    depends_on:
+      - vscode
+    network_mode: host
+    ipc: service:vscode
+    volumes:
+      - /home/ubuntu/RoboOps-Control-Plane:/roboops:ro
+      - ./roboops-fastdds.xml:/etc/roboops/fastdds.xml:ro
+    environment:
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      FASTRTPS_DEFAULT_PROFILES_FILE: /etc/roboops/fastdds.xml
+      ROS2_POSE_TOPIC_CANDIDATES: "/chassis/odom /tf /odom /robot/pose /pose"
+      ROS2_PROBE_TIMEOUT_SECONDS: "10"
+    command: >
+      bash -lc "source /opt/ros/humble/setup.bash &&
+      bash /roboops/sim/isaac-sim/scripts/probe-ros2-topics.sh"
+```
+
+Keep the `vscode` and `nginx` image lines. The upstream Launchable compose file
+expects the local override to supply those image names; removing them makes
+Compose fail with `has neither an image nor a build context specified`.
+
+Recreate the services after writing the override:
+
+```sh
+docker compose up -d --force-recreate
 ```
 
 ## Why Sidecar
@@ -46,8 +113,9 @@ The Launchable has two relevant runtime contexts:
 
 | Context | What worked | What failed |
 | --- | --- | --- |
-| Brev host | ROS2 Humble CLI discovered topics and publisher endpoints | `echo`/`hz` received no samples |
+| Brev host | ROS2 Humble CLI discovered topics and publisher endpoints | `echo`/`hz` received no samples without the shared Fast DDS profile |
 | Browser VS Code container | Isaac Sim and the bridge run here | No package install path because there is no `sudo` |
+| Compose `ros2-probe` sidecar | Received `/clock`, `/chassis/odom`, and `/tf` samples | Requires the Fast DDS profile before Isaac starts |
 
 A sidecar gives us a clean ROS2 CLI container colocated with the Launchable
 network, without mutating NVIDIA's `vscode` container.
@@ -59,13 +127,22 @@ Capture:
 ```sh
 docker ps
 docker inspect vscode --format '{{.HostConfig.NetworkMode}} {{.HostConfig.IpcMode}}'
-sim/isaac-sim/scripts/run-ros2-sidecar-probe.sh
+docker compose --profile probe run --rm ros2-probe
 ```
 
 The spike succeeds when the probe prints a sample from `/clock` and either
 `/chassis/odom` or `/tf`.
 
-## If The Wrapper Fails
+The successful Brev run printed:
+
+- `/clock` as `rosgraph_msgs/msg/Clock`;
+- `/chassis/odom` as `nav_msgs/msg/Odometry`;
+- `/tf` as `tf2_msgs/msg/TFMessage`.
+
+The repeated `sequence size exceeds remaining buffer` warning did not block
+sampling when YAML output followed it.
+
+## If The Probe Fails
 
 If Docker rejects IPC sharing with:
 
@@ -73,6 +150,14 @@ If Docker rejects IPC sharing with:
 non-shareable IPC
 ```
 
-do not continue with ad hoc Docker flags. Instead, add a sidecar service to the
-Launchable Compose file or run an Isaac/Python-side probe inside the existing
-`vscode` container.
+do not continue with ad hoc Docker flags. Use the Compose-managed sidecar above
+so `vscode` is created with `ipc: shareable`.
+
+If the probe sees topics but receives no samples, verify `FASTRTPS_DEFAULT_PROFILES_FILE`
+is set inside `vscode` before starting Isaac:
+
+```sh
+docker compose exec vscode bash
+echo "$FASTRTPS_DEFAULT_PROFILES_FILE"
+echo "$RMW_IMPLEMENTATION"
+```

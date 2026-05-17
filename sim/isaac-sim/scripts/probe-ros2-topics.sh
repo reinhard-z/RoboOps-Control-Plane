@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Prints the ROS2 graph evidence needed before wiring the RoboOps edge adapter.
 timeout_seconds="${ROS2_PROBE_TIMEOUT_SECONDS:-3}"
-pose_candidates="${ROS2_POSE_TOPIC_CANDIDATES:-/tf /odom /robot/pose /pose}"
+pose_candidates="${ROS2_POSE_TOPIC_CANDIDATES:-/chassis/odom /tf /odom /robot/pose /pose}"
 
 require_command() {
   local name="$1"

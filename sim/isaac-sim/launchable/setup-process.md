@@ -110,14 +110,18 @@ If RoboOps is not already present on the Brev instance:
 
 ```sh
 cd ~
-git clone <your-roboops-repo-url> RoboOps-Control-Plane
+git clone https://github.com/reinhard-z/RoboOps-Control-Plane.git RoboOps-Control-Plane
 cd RoboOps-Control-Plane
 ```
 
-Then probe ROS2 topics:
+Keep RoboOps as a sibling checkout of `isaac-launchable`. Do not clone it under
+`/workspace`, which belongs to the Isaac container workspace.
+
+The working ROS2 sample probe runs from the Launchable compose project:
 
 ```sh
-sim/isaac-sim/scripts/probe-ros2-topics.sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe
 ```
 
 ## ROS2 CLI On The Brev Host
@@ -164,16 +168,17 @@ The first run reached this state:
 - `ros2 topic echo` and `ros2 topic hz` from the Brev host did not receive
   samples.
 
-Do not repeat the same host-side debugging next time. The next bounded task is
-to run the RoboOps probe/adapter where Isaac is actually running:
+Do not repeat the same host-side debugging. The second run succeeded after
+launching Isaac and the Compose-managed `ros2-probe` sidecar with the same Fast
+DDS UDP profile:
 
-1. inside the browser VS Code / `vscode` container, if a ROS2 CLI or Python
-   adapter can be added there; or
-2. as a Compose-managed ROS2 sidecar with the networking/IPC settings defined
-   by the Launchable, rather than an ad hoc `docker run`.
+- `/clock` produced a `rosgraph_msgs/msg/Clock` sample.
+- `/chassis/odom` produced a `nav_msgs/msg/Odometry` sample.
+- `/tf` produced a `tf2_msgs/msg/TFMessage` sample.
 
-See `sim/isaac-sim/launchable/sidecar-probe.md` for the next-session plan.
+See `sim/isaac-sim/launchable/sidecar-probe.md` for the working Compose
+override and Fast DDS profile.
 
 Capture the outputs from `docker compose ps`, the `/viewer` status, topic
-discovery, and the first successful sample source. Those outputs decide whether
-the first adapter reads `/chassis/odom` or `/tf`.
+discovery, and the first successful sample source. The first adapter should read
+`/chassis/odom`, with `/tf` as fallback.

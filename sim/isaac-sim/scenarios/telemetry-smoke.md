@@ -22,6 +22,8 @@ Isaac Sim
 - `isaac-sim/isaac-launchable` services are healthy.
 - The Isaac viewer opens at `/viewer`.
 - RoboOps is checked out at `~/RoboOps-Control-Plane`.
+- The Launchable has the Fast DDS UDP profile and `ros2-probe` Compose sidecar
+  from `sim/isaac-sim/launchable/sidecar-probe.md`.
 - Fleet Platform is reachable from the Brev instance.
 
 ## Start Isaac Sim
@@ -37,19 +39,20 @@ Open the Brev secure link in another browser tab and change the path to
 
 ## Probe ROS2 Topics
 
-From the RoboOps checkout:
+From the Launchable checkout on the Brev host:
 
 ```sh
-cd ~/RoboOps-Control-Plane
-sim/isaac-sim/scripts/probe-ros2-topics.sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe
 ```
 
 Expected first-pass evidence:
 
 - `ros2` is available in the terminal environment.
 - `/clock` appears when the ROS2 bridge is active.
-- At least one pose source exists, such as `/tf`, `/odom`, or a dedicated robot
-  pose topic.
+- `/clock` produces a sample.
+- `/chassis/odom` produces a `nav_msgs/msg/Odometry` sample.
+- `/tf` produces a `tf2_msgs/msg/TFMessage` sample.
 
 ## Validated First Run
 
@@ -63,9 +66,9 @@ The first Brev run reached topic discovery but not sample extraction:
 - `ros2 topic echo` and `ros2 topic hz` from the Brev host did not receive
   samples.
 
-Next time, continue by running the probe or adapter inside the Isaac `vscode`
-container or by adding a supported ROS2 sidecar to the Launchable Compose setup.
-Do not treat host-side topic discovery alone as enough for telemetry mapping.
+The second run succeeded after launching Isaac and the sidecar probe with the
+same Fast DDS UDP profile. The first telemetry adapter should start from
+`/chassis/odom`, with `/tf` as fallback.
 
 ## Telemetry Mapping
 
@@ -74,9 +77,9 @@ Use the first available pose source to build a minimal telemetry heartbeat:
 | `robot.telemetry.v1` field | First smoke source |
 | --- | --- |
 | `observedAt` | `/clock` or edge wall time |
-| `pose.x` | robot pose in map/world frame |
-| `pose.y` | robot pose in map/world frame |
-| `pose.theta` | yaw derived from orientation |
+| `pose.x` | `/chassis/odom.pose.pose.position.x` |
+| `pose.y` | `/chassis/odom.pose.pose.position.y` |
+| `pose.theta` | yaw derived from `/chassis/odom.pose.pose.orientation` |
 | `batteryPercent` | fixed fallback, for example `80` |
 | `health` | fixed `OK` until diagnostics are wired |
 | `connectionState` | `ONLINE` while the adapter is connected |

@@ -142,7 +142,7 @@ The first adapter should consume only common ROS2 messages:
 | Need | Candidate source |
 | --- | --- |
 | Sim time | `/clock` |
-| Robot pose | `/tf`, `/odom`, or a dedicated pose topic |
+| Robot pose | `/chassis/odom`, with `/tf` fallback |
 | Robot command input | Nav2 action, velocity topic, or a project-specific command adapter |
 | Basic health | Diagnostics, watchdog state, or adapter policy |
 | Battery | Battery plugin, diagnostic topic, or configured fallback |
@@ -165,12 +165,13 @@ The first Brev run validated:
 - ROS2 discovery from the Brev host sees Isaac topics including `/clock`, `/tf`,
   `/chassis/odom`, `/cmd_vel`, lidar, camera, and IMU topics.
 
-The first run did not complete sample subscription from the Brev host. Topics
-and publisher endpoints were visible, but `ros2 topic echo` and `ros2 topic hz`
-did not receive samples. Treat the next step as a bounded runtime-integration
-spike: run the RoboOps probe/adapter inside the Isaac `vscode` container or add
-a supported ROS2 sidecar to the Launchable Compose setup. Avoid spending more
-time on ad hoc host-side DDS tuning unless the sidecar path also fails.
+The first run did not complete sample subscription from the Brev host. The
+second run succeeded with a Compose-managed ROS2 sidecar after both Isaac and the
+probe used the same Fast DDS UDP profile. The probe received samples from
+`/clock`, `/chassis/odom`, and `/tf`.
+
+Start the first adapter from `/chassis/odom`; keep `/tf` as a fallback pose
+source. Avoid spending more time on ad hoc host-side DDS tuning.
 
 ## RoboOps Contract Boundary
 
