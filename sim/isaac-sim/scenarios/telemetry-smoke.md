@@ -85,6 +85,8 @@ docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/hum
 Expected telemetry evidence:
 
 - stdout is one JSON object with `schemaVersion: "robot.telemetry.v1"`;
+- `observedAt` comes from Isaac `/clock`, formatted as an ISO timestamp;
+- `receivedAt` is the sidecar wall-clock receive time;
 - `pose.x` and `pose.y` come from `/chassis/odom.pose.pose.position`;
 - `pose.theta` is yaw derived from `/chassis/odom.pose.pose.orientation`;
 - `batteryPercent`, `health`, `connectionState`, and `edgeAgentVersion` use
@@ -112,7 +114,8 @@ Use the first available pose source to build a minimal telemetry heartbeat:
 
 | `robot.telemetry.v1` field | First smoke source |
 | --- | --- |
-| `observedAt` | `/clock` or edge wall time |
+| `observedAt` | `/clock`, formatted as an ISO timestamp |
+| `receivedAt` | edge wall time |
 | `pose.x` | `/chassis/odom.pose.pose.position.x` |
 | `pose.y` | `/chassis/odom.pose.pose.position.y` |
 | `pose.theta` | yaw derived from `/chassis/odom.pose.pose.orientation` |

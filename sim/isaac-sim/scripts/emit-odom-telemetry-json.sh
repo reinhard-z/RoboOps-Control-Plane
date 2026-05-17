@@ -15,11 +15,14 @@ require_command() {
 
 require_command python3
 
+# Keeps ROS client logging off stdout so callers can pipe stdout as JSON.
+export RCUTILS_LOGGING_USE_STDOUT="${RCUTILS_LOGGING_USE_STDOUT:-0}"
+
 python3 - <<'PY'
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 import os
@@ -32,6 +35,7 @@ try:
     from nav_msgs.msg import Odometry
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+    from rosgraph_msgs.msg import Clock
 except ImportError as exc:
     print(
         "Missing ROS2 Python modules. Source /opt/ros/humble/setup.bash inside the "
@@ -55,7 +59,8 @@ class EmitterConfig:
     """Runtime settings that are safe to vary between Isaac smoke runs."""
 
     robot_id: str
-    topic: str
+    clock_topic: str
+    odom_topic: str
     timeout_seconds: float
 
 
@@ -85,7 +90,8 @@ def read_positive_float_env(name: str, default_value: float) -> float:
 def read_config() -> EmitterConfig:
     return EmitterConfig(
         robot_id=read_required_env("ISAAC_TELEMETRY_ROBOT_ID", "nova-carter"),
-        topic=read_required_env("ISAAC_TELEMETRY_ODOM_TOPIC", "/chassis/odom"),
+        clock_topic=read_required_env("ISAAC_TELEMETRY_CLOCK_TOPIC", "/clock"),
+        odom_topic=read_required_env("ISAAC_TELEMETRY_ODOM_TOPIC", "/chassis/odom"),
         timeout_seconds=read_positive_float_env("ISAAC_TELEMETRY_TIMEOUT_SECONDS", 10.0),
     )
 
@@ -93,6 +99,22 @@ def read_config() -> EmitterConfig:
 # Returns a UTC ISO timestamp that satisfies the shared protocol date-time schema.
 def now_iso_utc() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+# Converts Isaac /clock simulation time into the protocol's ISO timestamp field.
+def ros_clock_to_iso_utc(clock: Clock) -> str:
+    seconds = int(clock.clock.sec)
+    nanoseconds = int(clock.clock.nanosec)
+
+    if seconds < 0:
+        raise ValueError("/clock seconds must be non-negative")
+
+    if nanoseconds < 0 or nanoseconds >= 1_000_000_000:
+        raise ValueError("/clock nanoseconds must be between 0 and 999999999")
+
+    timestamp = datetime.fromtimestamp(seconds, timezone.utc)
+    timestamp += timedelta(microseconds=nanoseconds // 1_000)
+    return timestamp.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 # Converts a ROS quaternion orientation into the 2D yaw angle used by Fleet Platform.
@@ -114,14 +136,19 @@ def require_finite_number(name: str, value: float) -> float:
     return value
 
 
-# Waits for one Odometry message using a QoS profile compatible with Isaac bridge data.
-def wait_for_odom_sample(node: Node, topic: str, timeout_seconds: float) -> Odometry:
-    sample = None
+# Waits for one /clock and one Odometry sample using Isaac-compatible QoS.
+def wait_for_samples(node: Node, config: EmitterConfig) -> tuple[Clock, Odometry]:
+    clock_sample = None
+    odom_sample = None
 
-    def handle_sample(message: Odometry) -> None:
-        nonlocal sample
-        if sample is None:
-            sample = message
+    def handle_clock_sample(message: Clock) -> None:
+        nonlocal clock_sample
+        clock_sample = message
+
+    def handle_odom_sample(message: Odometry) -> None:
+        nonlocal odom_sample
+        if odom_sample is None:
+            odom_sample = message
 
     qos = QoSProfile(
         depth=10,
@@ -129,39 +156,54 @@ def wait_for_odom_sample(node: Node, topic: str, timeout_seconds: float) -> Odom
         history=HistoryPolicy.KEEP_LAST,
         reliability=ReliabilityPolicy.BEST_EFFORT,
     )
-    subscription = node.create_subscription(Odometry, topic, handle_sample, qos)
-    deadline = time.monotonic() + timeout_seconds
+    clock_subscription = node.create_subscription(
+        Clock, config.clock_topic, handle_clock_sample, qos
+    )
+    odom_subscription = node.create_subscription(
+        Odometry, config.odom_topic, handle_odom_sample, qos
+    )
+    deadline = time.monotonic() + config.timeout_seconds
 
     try:
-        while rclpy.ok() and sample is None:
+        while rclpy.ok() and (clock_sample is None or odom_sample is None):
             remaining_seconds = deadline - time.monotonic()
             if remaining_seconds <= 0:
+                missing_topics = []
+                if clock_sample is None:
+                    missing_topics.append(config.clock_topic)
+                if odom_sample is None:
+                    missing_topics.append(config.odom_topic)
                 raise TimeoutError(
-                    f"No {topic} Odometry sample received within {timeout_seconds:.1f}s"
+                    "No sample received from "
+                    f"{', '.join(missing_topics)} within {config.timeout_seconds:.1f}s"
                 )
 
             rclpy.spin_once(node, timeout_sec=min(0.1, remaining_seconds))
     finally:
-        node.destroy_subscription(subscription)
+        node.destroy_subscription(clock_subscription)
+        node.destroy_subscription(odom_subscription)
 
-    if sample is None:
-        raise RuntimeError(f"ROS2 shut down before a {topic} Odometry sample was received")
+    if clock_sample is None or odom_sample is None:
+        raise RuntimeError("ROS2 shut down before telemetry samples were received")
 
-    return sample
+    return clock_sample, odom_sample
 
 
 # Projects a ROS Odometry sample into the robot.telemetry.v1 payload shape.
-def telemetry_payload(config: EmitterConfig, odometry: Odometry) -> dict[str, object]:
+def telemetry_payload(
+    config: EmitterConfig,
+    clock: Clock,
+    odometry: Odometry,
+) -> dict[str, object]:
     position = odometry.pose.pose.position
     orientation = odometry.pose.pose.orientation
-    observed_at = now_iso_utc()
 
     return {
         "schemaVersion": SCHEMA_VERSION,
         "eventId": f"telemetry-{uuid.uuid4()}",
         "robotId": config.robot_id,
-        "observedAt": observed_at,
-        "receivedAt": observed_at,
+        "observedAt": ros_clock_to_iso_utc(clock),
+        "receivedAt": now_iso_utc(),
         "pose": {
             "x": require_finite_number("pose.x", float(position.x)),
             "y": require_finite_number("pose.y", float(position.y)),
@@ -186,8 +228,11 @@ def main() -> int:
     rclpy.init(args=None)
     node = rclpy.create_node("roboops_odom_telemetry_json_emitter")
     try:
-        odometry = wait_for_odom_sample(node, config.topic, config.timeout_seconds)
-        print(json.dumps(telemetry_payload(config, odometry), separators=(",", ":")))
+        clock, odometry = wait_for_samples(node, config)
+        print(
+            json.dumps(telemetry_payload(config, clock, odometry), separators=(",", ":")),
+            flush=True,
+        )
         return 0
     except (RuntimeError, TimeoutError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
