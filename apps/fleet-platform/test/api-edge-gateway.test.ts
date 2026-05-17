@@ -214,6 +214,52 @@ describe("fleet platform API and edge gateway", () => {
     edge.close();
   });
 
+  it("accepts Isaac odometry telemetry through the existing edge.telemetry wrapper", async () => {
+    const edge = await openWebSocket(edgeUrl);
+    const receivedAt = new Date().toISOString();
+
+    edge.send(
+      JSON.stringify({
+        type: "edge.telemetry",
+        payload: {
+          schemaVersion: protocolSchemaVersions.robotTelemetry,
+          eventId: "telemetry-isaac-odom-001",
+          robotId: "robot-a",
+          observedAt: receivedAt,
+          receivedAt,
+          pose: { x: 1.25, y: -0.5, theta: 0.75 },
+          batteryPercent: 80,
+          health: "OK",
+          connectionState: "ONLINE",
+          lastSeenCommandSequence: 0,
+          edgeAgentVersion: "isaac-odom-smoke"
+        }
+      })
+    );
+
+    await eventually(async () => {
+      const robotResponse = await fetch(`${baseUrl}/robots/robot-a`);
+      const robotBody = (await robotResponse.json()) as {
+        readonly robot: {
+          readonly connectionState: string;
+          readonly edgeAgentVersion?: string;
+          readonly pose?: {
+            readonly x: number;
+            readonly y: number;
+            readonly theta: number;
+          };
+        };
+      };
+      expect(robotBody.robot).toMatchObject({
+        connectionState: "ONLINE",
+        edgeAgentVersion: "isaac-odom-smoke",
+        pose: { x: 1.25, y: -0.5, theta: 0.75 }
+      });
+    });
+
+    edge.close();
+  });
+
   it("streams reducer-produced events to SSE clients", async () => {
     const controller = new AbortController();
     const streamResponse = await fetch(`${baseUrl}/stream/events`, {

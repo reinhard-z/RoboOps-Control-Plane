@@ -48,7 +48,7 @@ except ImportError as exc:
 
 BATTERY_PERCENT = 80
 CONNECTION_STATE = "ONLINE"
-EDGE_AGENT_VERSION = "local/dev"
+DEFAULT_EDGE_AGENT_VERSION = "local/dev"
 HEALTH = "OK"
 LAST_SEEN_COMMAND_SEQUENCE = 0
 SCHEMA_VERSION = "robot.telemetry.v1"
@@ -61,6 +61,7 @@ class EmitterConfig:
     robot_id: str
     clock_topic: str
     odom_topic: str
+    edge_agent_version: str
     timeout_seconds: float
 
 
@@ -92,6 +93,10 @@ def read_config() -> EmitterConfig:
         robot_id=read_required_env("ISAAC_TELEMETRY_ROBOT_ID", "nova-carter"),
         clock_topic=read_required_env("ISAAC_TELEMETRY_CLOCK_TOPIC", "/clock"),
         odom_topic=read_required_env("ISAAC_TELEMETRY_ODOM_TOPIC", "/chassis/odom"),
+        edge_agent_version=read_required_env(
+            "ISAAC_TELEMETRY_EDGE_AGENT_VERSION",
+            DEFAULT_EDGE_AGENT_VERSION,
+        ),
         timeout_seconds=read_positive_float_env("ISAAC_TELEMETRY_TIMEOUT_SECONDS", 10.0),
     )
 
@@ -213,7 +218,7 @@ def telemetry_payload(
         "health": HEALTH,
         "connectionState": CONNECTION_STATE,
         "lastSeenCommandSequence": LAST_SEEN_COMMAND_SEQUENCE,
-        "edgeAgentVersion": EDGE_AGENT_VERSION,
+        "edgeAgentVersion": config.edge_agent_version,
     }
 
 

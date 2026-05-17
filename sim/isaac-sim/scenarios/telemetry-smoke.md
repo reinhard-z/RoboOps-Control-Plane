@@ -92,6 +92,42 @@ Expected telemetry evidence:
 - `batteryPercent`, `health`, `connectionState`, and `edgeAgentVersion` use
   the local smoke-test fallback values.
 
+## Send Live Telemetry To Fleet Platform
+
+After the one-shot payload is valid, run the edge sender from the same ROS2
+sidecar. Set `FLEET_PLATFORM_URL` to the Fleet Platform HTTP base URL reachable
+from inside the sidecar; the sender converts it to
+`/edge/connect?robotId=<id>` and sends the existing `edge.telemetry` wrapper.
+Replace `fleet-platform.example` in the command below with that reachable host.
+
+For a stock local Operator UI, use `robot-a` so the default screen tracks the
+Isaac pose:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && FLEET_PLATFORM_URL=http://fleet-platform.example:4010 ISAAC_EDGE_ROBOT_ID=robot-a ISAAC_EDGE_HEARTBEAT_SECONDS=1 bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh'
+```
+
+Use dry-run first when checking the edge frame without opening a WebSocket:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && ISAAC_EDGE_ROBOT_ID=robot-a bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --dry-run'
+```
+
+Expected edge evidence:
+
+- stdout in dry-run mode is one `edge.telemetry` JSON object;
+- live mode logs `connected to Fleet Platform edge socket`;
+- live mode logs one `sent edge.telemetry eventId=...` line per heartbeat;
+- Fleet Platform accepts the frame without a protocol change;
+- Operator UI shows fresh telemetry and a moving pose after `/cmd_vel` moves
+  Nova Carter.
+
+This first Isaac sender only publishes telemetry. It does not execute or
+acknowledge platform commands; keep the `/cmd_vel` smoke command path separate
+for this slice.
+
 ## Validated First Run
 
 The first Brev run reached topic discovery but not sample extraction:
