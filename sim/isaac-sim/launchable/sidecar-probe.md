@@ -32,6 +32,13 @@ cd ~/isaac-launchable/isaac-lab
 docker compose --profile probe run --rm ros2-probe
 ```
 
+9. If the topic probe succeeds, run the repeatable `/cmd_vel` smoke from the
+   same Compose sidecar:
+
+```sh
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && bash /roboops/sim/isaac-sim/scripts/send-cmd-vel-smoke.sh'
+```
+
 ## Working Compose Sidecar
 
 Create the Fast DDS UDP profile in the upstream Launchable checkout:
@@ -132,6 +139,22 @@ docker compose --profile probe run --rm ros2-probe
 
 The spike succeeds when the probe prints a sample from `/clock` and either
 `/chassis/odom` or `/tf`.
+
+## Repeatable Command Smoke
+
+Run this only after the Nova Carter ROS scene is loaded and simulation Play is
+active. The command smoke must use the Compose-managed `ros2-probe` sidecar so
+Isaac and the probe share the Fast DDS UDP profile.
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && bash /roboops/sim/isaac-sim/scripts/send-cmd-vel-smoke.sh'
+```
+
+The script prints `/cmd_vel` topic info, captures one `/chassis/odom` sample,
+publishes forward motion, publishes a turn command, sends a final zero-velocity
+stop, and captures a second `/chassis/odom` sample. The smoke passes when the
+robot visibly moves and the before/after odometry samples are present.
 
 The successful Brev run printed:
 

@@ -54,6 +54,24 @@ Expected first-pass evidence:
 - `/chassis/odom` produces a `nav_msgs/msg/Odometry` sample.
 - `/tf` produces a `tf2_msgs/msg/TFMessage` sample.
 
+## Smoke `/cmd_vel`
+
+After the topic probe succeeds, run the command smoke from the same Launchable
+checkout and Compose-managed ROS2 sidecar:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && bash /roboops/sim/isaac-sim/scripts/send-cmd-vel-smoke.sh'
+```
+
+Expected command evidence:
+
+- `/cmd_vel` prints topic info with the Isaac subscriber present.
+- `/chassis/odom` produces one sample before movement.
+- Forward and turn commands visibly move the Nova Carter robot.
+- The final zero-velocity command stops the robot.
+- `/chassis/odom` produces one sample after movement.
+
 ## Validated First Run
 
 The first Brev run reached topic discovery but not sample extraction:
@@ -93,6 +111,8 @@ semantic labels, generated datasets, or maps to Fleet Platform.
 
 - Isaac Sim launches and renders through `/viewer`.
 - ROS2 probe records samples from `/clock` and one usable pose source.
+- `/cmd_vel` smoke records before/after `/chassis/odom` samples and visible
+  robot movement.
 - Edge adapter emits a valid `edge.telemetry` message.
 - Fleet Platform accepts the telemetry without protocol changes.
 - Operator UI shows fresh telemetry and a robot pose update.
@@ -104,5 +124,6 @@ Capture:
 - screenshot of Brev Launchable running;
 - screenshot of Isaac Sim viewer;
 - terminal output from `probe-ros2-topics.sh`;
+- terminal output from `send-cmd-vel-smoke.sh`;
 - one sample `edge.telemetry` JSON payload;
 - Operator UI screenshot showing fresh telemetry/map movement.
