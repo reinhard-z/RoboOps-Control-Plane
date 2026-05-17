@@ -72,6 +72,24 @@ Expected command evidence:
 - The final zero-velocity command stops the robot.
 - `/chassis/odom` produces one sample after movement.
 
+## Emit One Telemetry Payload
+
+After the topic probe succeeds and the Nova Carter ROS scene is playing, emit a
+single `robot.telemetry.v1` JSON payload from `/chassis/odom`:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && bash /roboops/sim/isaac-sim/scripts/emit-odom-telemetry-json.sh'
+```
+
+Expected telemetry evidence:
+
+- stdout is one JSON object with `schemaVersion: "robot.telemetry.v1"`;
+- `pose.x` and `pose.y` come from `/chassis/odom.pose.pose.position`;
+- `pose.theta` is yaw derived from `/chassis/odom.pose.pose.orientation`;
+- `batteryPercent`, `health`, `connectionState`, and `edgeAgentVersion` use
+  the local smoke-test fallback values.
+
 ## Validated First Run
 
 The first Brev run reached topic discovery but not sample extraction:
