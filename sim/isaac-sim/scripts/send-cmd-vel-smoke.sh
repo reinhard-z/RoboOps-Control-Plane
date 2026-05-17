@@ -50,10 +50,19 @@ run_bounded_publish() {
 # Captures one odometry sample so before/after movement can be compared.
 capture_odom_sample() {
   local label="$1"
+  local status
 
   echo
   echo "== /chassis/odom ${label} =="
+  set +e
   timeout "${odom_timeout_seconds}" ros2 topic echo --once /chassis/odom
+  status="$?"
+  set -e
+
+  if [ "${status}" -ne 0 ]; then
+    echo "No /chassis/odom sample captured for '${label}' within ${odom_timeout_seconds}s." >&2
+    exit "${status}"
+  fi
 }
 
 # Prints /cmd_vel metadata and fails early if Isaac is not subscribed.
@@ -99,7 +108,7 @@ publish_twist_for() {
   echo "== ${label} (${seconds}s) =="
   run_bounded_publish \
     "${seconds}" \
-    ros2 topic pub --rate "${rate_hz}" /cmd_vel geometry_msgs/msg/Twist \
+    ros2 topic pub -r "${rate_hz}" /cmd_vel geometry_msgs/msg/Twist \
     "$(twist_payload "${linear_x}" "${angular_z}")"
 }
 
