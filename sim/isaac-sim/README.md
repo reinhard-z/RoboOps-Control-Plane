@@ -19,7 +19,7 @@ Mac developer machine
 -> Fleet Platform, Operator UI, repo development
 
 Remote RTX Linux workstation or cloud VM
--> Isaac Sim, ROS2 Jazzy bridge, robot scene, edge adapter
+-> Isaac Sim, ROS2 bridge, robot scene, edge adapter
 ```
 
 Official references:
@@ -53,7 +53,75 @@ Cloud references:
 
 - https://docs.nvidia.com/brev/concepts/launchables
 - https://docs.isaacsim.omniverse.nvidia.com/6.0.0/installation/install_advanced_cloud_setup_launchable.html
+- https://github.com/isaac-sim/isaac-launchable
+- https://github.com/isaac-sim/isaac-launchable/blob/main/isaac-lab/vscode/README.md
 - https://developer.nvidia.com/isaac-sim
+
+## Launchable Template Notes
+
+Use `isaac-sim/isaac-launchable` as the upstream template reference, not as a
+vendored dependency. It packages the workflow we want for the first robotics
+smoke test:
+
+- browser-based VS Code for commands and development;
+- browser-based Isaac Sim streaming at `/viewer`;
+- Docker Compose-managed services for VS Code, Isaac Lab, Isaac Sim, and the
+  web viewer;
+- Brev secure link on port `80`;
+- streaming ports `1024`, `47998`, and `49100`;
+- Isaac Sim `5.1` and Isaac Lab `2.3` in the current template.
+
+The template's setup shape is simple:
+
+```sh
+git clone https://github.com/isaac-sim/isaac-launchable
+cd isaac-launchable/isaac-lab
+docker compose up -d
+```
+
+After the containers are ready, open the browser VS Code terminal and start the
+streamed Isaac Sim app:
+
+```sh
+ACCEPT_EULA=y /isaac-sim/runheadless.sh
+```
+
+If you need an Isaac Lab tutorial scene instead, run it from the same browser VS
+Code terminal:
+
+```sh
+cd /workspace/isaaclab
+./isaaclab.sh -p scripts/tutorials/00_sim/create_empty.py --livestream 2
+```
+
+The RoboOps repo should live beside the launchable repo on the Brev host:
+
+```text
+/home/ubuntu/isaac-launchable
+/home/ubuntu/RoboOps-Control-Plane
+```
+
+Inside the `vscode` container, Isaac Lab is available at `/workspace/isaaclab`.
+
+Keep RoboOps-specific setup, probes, scenario notes, and telemetry adapters in
+this repository under `sim/isaac-sim`. Do not copy NVIDIA container files,
+streaming client code, cached assets, generated datasets, or credentials into
+this monorepo.
+
+## Repo Scaffold
+
+Use these files when creating or running the first Brev environment:
+
+| Path | Purpose |
+| --- | --- |
+| `launchable/setup.sh` | Clones/starts the upstream Isaac Launchable beside the RoboOps checkout |
+| `launchable/setup-process.md` | Records Brev CLI, browser access, and first remote validation steps |
+| `launchable/environment.md` | Records expected compute, workspace layout, and supported environment variables |
+| `launchable/ports.md` | Lists secure-link and streaming ports for the Launchable |
+| `launchable/sidecar-probe.md` | Defines the next bounded spike for sample extraction near Isaac |
+| `scenarios/telemetry-smoke.md` | Step-by-step first telemetry smoke scenario |
+| `scripts/probe-ros2-topics.sh` | Captures ROS2 topic evidence before wiring the edge adapter |
+| `scripts/run-ros2-sidecar-probe.sh` | Runs the probe in a ROS2 sidecar sharing the Isaac container network |
 
 ## Why Isaac Sim
 
@@ -63,9 +131,11 @@ twin-style warehouse.
 
 ## ROS2 Bridge Shape
 
-Isaac Sim provides a ROS2 bridge and supports ROS2 Humble and Jazzy. For this
-repo, use Ubuntu 24.04 with ROS2 Jazzy when possible so the simulator side
-matches the C++ edge-agent target.
+Isaac Sim provides a ROS2 bridge and supports ROS2 Humble and Jazzy. The tested
+Brev Launchable runs Isaac in a Noble container but exposes host SSH on Ubuntu
+22.04 Jammy. Use Humble CLI tools on the Jammy host for first topic inspection;
+keep Jazzy as the longer-term adapter target when the runtime host is Ubuntu
+24.04.
 
 The first adapter should consume only common ROS2 messages:
 
@@ -80,6 +150,27 @@ The first adapter should consume only common ROS2 messages:
 Camera, depth, lidar, radar, IMU, joint states, semantic labels, and synthetic
 datasets are valuable locally, but they should not be sent to Fleet Platform
 until the cloud protocol has explicit fields for them.
+
+## Validated State
+
+The first Brev run validated:
+
+- `roboops-isaac-smoke-02` launched on an AWS `g6e.4xlarge` with an NVIDIA L40S.
+- Browser VS Code opened through the Brev Launchable.
+- Isaac Sim streamed through `/viewer`.
+- `ACCEPT_EULA=y /isaac-sim/runheadless.sh` starts the streamed Isaac app from
+  the browser VS Code terminal.
+- Nova Carter ROS and warehouse scenes loaded in Isaac Sim.
+- ROS2 Humble CLI installs on the Brev SSH host.
+- ROS2 discovery from the Brev host sees Isaac topics including `/clock`, `/tf`,
+  `/chassis/odom`, `/cmd_vel`, lidar, camera, and IMU topics.
+
+The first run did not complete sample subscription from the Brev host. Topics
+and publisher endpoints were visible, but `ros2 topic echo` and `ros2 topic hz`
+did not receive samples. Treat the next step as a bounded runtime-integration
+spike: run the RoboOps probe/adapter inside the Isaac `vscode` container or add
+a supported ROS2 sidecar to the Launchable Compose setup. Avoid spending more
+time on ad hoc host-side DDS tuning unless the sidecar path also fails.
 
 ## RoboOps Contract Boundary
 
@@ -116,9 +207,10 @@ The `edge.telemetry` payload remains `robot.telemetry.v1`:
 ## First Smoke Scenario
 
 1. Run Isaac Sim on an RTX Linux host or cloud VM.
-2. Enable the ROS2 bridge with ROS2 Jazzy.
+2. Enable the ROS2 bridge.
 3. Load one mobile robot scene and publish `/clock` plus a pose source.
-4. Run the C++ edge adapter near Isaac Sim.
+4. Run the probe or edge adapter inside the Isaac runtime container or a
+   supported ROS2 sidecar.
 5. Convert pose and simple health into `robot.telemetry.v1`.
 6. Send telemetry to a Fleet Platform running locally or in the hosted stack.
 7. Verify Operator UI map movement, telemetry freshness, stale handling, and
