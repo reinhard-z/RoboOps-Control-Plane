@@ -114,6 +114,22 @@ git clone https://github.com/reinhard-z/RoboOps-Control-Plane.git RoboOps-Contro
 cd RoboOps-Control-Plane
 ```
 
+If the clone fails with `Permission denied` under
+`/home/ubuntu/RoboOps-Control-Plane/.git`, check whether a previous setup left a
+root-owned placeholder directory:
+
+```sh
+ls -ld ~/RoboOps-Control-Plane
+ls -ld ~/RoboOps-Control-Plane/.git
+```
+
+If the directory is root-owned and has no `.git`, remove it and clone again:
+
+```sh
+sudo rm -rf ~/RoboOps-Control-Plane
+git clone https://github.com/reinhard-z/RoboOps-Control-Plane.git ~/RoboOps-Control-Plane
+```
+
 Keep RoboOps as a sibling checkout of `isaac-launchable`. Do not clone it under
 `/workspace`, which belongs to the Isaac container workspace.
 

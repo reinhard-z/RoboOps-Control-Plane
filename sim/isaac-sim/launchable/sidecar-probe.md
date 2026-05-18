@@ -114,6 +114,15 @@ Recreate the services after writing the override:
 docker compose up -d --force-recreate
 ```
 
+The sidecar does not need RoboOps scripts copied into the Isaac container. The
+override mounts the Brev host checkout at `/home/ubuntu/RoboOps-Control-Plane`
+as `/roboops` inside `ros2-probe`. Verify the mount after a fresh Launchable
+setup:
+
+```sh
+docker compose --profile probe run --rm ros2-probe bash -lc 'ls -l /roboops/sim/isaac-sim/scripts'
+```
+
 ## Why Sidecar
 
 The Launchable has two relevant runtime contexts:
@@ -165,6 +174,47 @@ The successful Brev run printed:
 The repeated `sequence size exceeds remaining buffer` warning did not block
 sampling when YAML output followed it.
 
+If `/cmd_vel` or `/chassis/odom` briefly appears missing even though the scene is
+playing, rerun the check once after a short wait. Fresh `ros2-probe` containers
+can start before Fast DDS discovery has fully converged.
+
+## Edge Telemetry Sender Smoke
+
+After `/clock` and `/chassis/odom` produce samples, dry-run the Isaac telemetry
+sender from the same sidecar:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && ISAAC_EDGE_ROBOT_ID=robot-a bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --dry-run'
+```
+
+The dry-run passes when stdout is one `edge.telemetry` JSON object containing a
+`robot.telemetry.v1` payload with changing `pose.x`, `pose.y`, or `pose.theta`
+after `/cmd_vel` movement.
+
+For a live Fleet Platform running on the Brev host, use the app's health routes
+to verify it first:
+
+```sh
+curl http://127.0.0.1:4010/health/live
+curl http://127.0.0.1:4010/health/ready
+```
+
+The app does not expose `/health`. Because the probe sidecar uses
+`network_mode: host`, the live sender should use the host loopback URL:
+
+```sh
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && FLEET_PLATFORM_URL=http://127.0.0.1:4010 ISAAC_EDGE_ROBOT_ID=robot-a bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh'
+```
+
+The live sender passes when it logs `connected to Fleet Platform edge socket`
+and repeated `sent edge.telemetry eventId=...` lines. Confirm the platform
+snapshot separately:
+
+```sh
+curl http://127.0.0.1:4010/robots/robot-a
+```
+
 ## If The Probe Fails
 
 If Docker rejects IPC sharing with:
@@ -183,4 +233,13 @@ is set inside `vscode` before starting Isaac:
 docker compose exec vscode bash
 echo "$FASTRTPS_DEFAULT_PROFILES_FILE"
 echo "$RMW_IMPLEMENTATION"
+```
+
+If `/clock` is missing, Isaac is usually not publishing the ROS graph yet. Check
+that Isaac is running, the Nova Carter ROS scene is loaded, and simulation Play
+is active before rerunning the probe:
+
+```sh
+docker compose exec vscode bash -lc 'pgrep -af "isaac|kit|runheadless" | head -20'
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && ros2 topic list | sort'
 ```
