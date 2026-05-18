@@ -115,18 +115,29 @@ cd ~/isaac-launchable/isaac-lab
 docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && ISAAC_EDGE_ROBOT_ID=robot-a bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --dry-run'
 ```
 
+Use the command fixture when checking the ack path without Isaac or a live Fleet
+Platform:
+
+```sh
+bash sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --command-fixture sim/isaac-sim/fixtures/platform-command.json
+```
+
 Expected edge evidence:
 
 - stdout in dry-run mode is one `edge.telemetry` JSON object;
+- stdout in command fixture mode is one valid `edge.command_ack` JSON object;
 - live mode logs `connected to Fleet Platform edge socket`;
 - live mode logs one `sent edge.telemetry eventId=...` line per heartbeat;
+- live mode logs `sent edge.command_ack commandId=... status=...` after a
+  valid `platform.command`;
 - Fleet Platform accepts the frame without a protocol change;
 - Operator UI shows fresh telemetry and a moving pose after `/cmd_vel` moves
   Nova Carter.
 
-This first Isaac sender only publishes telemetry. It does not execute or
-acknowledge platform commands; keep the `/cmd_vel` smoke command path separate
-for this slice.
+The Isaac sender acknowledges `GO_TO_POSE` and `CANCEL_MISSION` commands and
+rejects unsupported command types with an explicit ack. It does not yet map
+platform commands into ROS2 actions or `/cmd_vel`; keep that motion path in the
+separate smoke command until the command-to-ROS2 slice is implemented.
 
 ## Validated First Run
 

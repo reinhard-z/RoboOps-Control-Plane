@@ -120,6 +120,8 @@ Use these files when creating or running the first Brev environment:
 | `launchable/ports.md` | Lists secure-link and streaming ports for the Launchable |
 | `launchable/sidecar-probe.md` | Defines the next bounded spike for sample extraction near Isaac |
 | `scenarios/telemetry-smoke.md` | Step-by-step first telemetry smoke scenario |
+| `fixtures/platform-command.json` | Local `platform.command` fixture for ack validation |
+| `fixtures/robot-telemetry.json` | Local `robot.telemetry.v1` fixture for dry-run validation |
 | `scripts/probe-ros2-topics.sh` | Captures ROS2 topic evidence before wiring the edge adapter |
 | `scripts/run-ros2-sidecar-probe.sh` | Runs the probe in a ROS2 sidecar sharing the Isaac container network |
 
@@ -216,3 +218,5 @@ The `edge.telemetry` payload remains `robot.telemetry.v1`:
 6. Send telemetry to a Fleet Platform running locally or in the hosted stack.
 7. Verify Operator UI map movement, telemetry freshness, stale handling, and
    reconnect reconciliation without changing the cloud contract.
+8. Receive `platform.command` messages over the same edge socket and return
+   `edge.command_ack` responses.

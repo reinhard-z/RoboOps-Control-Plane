@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "robot.telemetry.v1",
+  "eventId": "telemetry-isaac-fixture-001",
+  "robotId": "nova-carter",
+  "observedAt": "2026-05-10T12:00:03.000Z",
+  "receivedAt": "2026-05-10T12:00:04.000Z",
+  "pose": {
+    "x": 1.7,
+    "y": 4.1,
+    "theta": 1.51
+  },
+  "batteryPercent": 80,
+  "health": "OK",
+  "connectionState": "ONLINE",
+  "lastSeenCommandSequence": 0,
+  "edgeAgentVersion": "isaac-fixture"
+}
