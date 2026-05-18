@@ -30,11 +30,13 @@ import json
 import math
 import os
 import secrets
+import shutil
 import socket
 import ssl
 import struct
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -62,6 +64,33 @@ ROBOT_TELEMETRY_SCHEMA = "robot.telemetry.v1"
 SAFETY_CLASSES = {"NORMAL", "RISKY", "EMERGENCY_STOP"}
 SUPPORTED_COMMAND_TYPES = {"GO_TO_POSE", "CANCEL_MISSION"}
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+DEFAULT_CMD_VEL_TOPIC = "/cmd_vel"
+DEFAULT_CMD_VEL_RATE_HZ = 10.0
+DEFAULT_CMD_VEL_LINEAR_X = 0.25
+DEFAULT_CMD_VEL_ANGULAR_Z = 0.5
+DEFAULT_CMD_VEL_MIN_FORWARD_SECONDS = 1.0
+DEFAULT_CMD_VEL_MAX_FORWARD_SECONDS = 6.0
+DEFAULT_CMD_VEL_MAX_TURN_SECONDS = 4.0
+DEFAULT_CMD_VEL_STOP_SECONDS = 1.0
+DEFAULT_CMD_VEL_MIN_STEP_SECONDS = 0.2
+DEFAULT_CMD_VEL_MIN_TRANSLATION_METERS = 0.05
+
+
+@dataclass(frozen=True)
+class MotionConfig:
+    """Runtime settings for the bounded /cmd_vel command smoke shim."""
+
+    enabled: bool
+    topic: str
+    rate_hz: float
+    linear_x_mps: float
+    angular_z_radps: float
+    min_forward_seconds: float
+    max_forward_seconds: float
+    max_turn_seconds: float
+    stop_seconds: float
+    min_step_seconds: float
+    min_translation_meters: float
 
 
 @dataclass(frozen=True)
@@ -82,6 +111,38 @@ class SenderConfig:
     once: bool
     connect_timeout_seconds: float
     emitter_timeout_seconds: float
+    motion: MotionConfig
+
+
+@dataclass(frozen=True)
+class Pose2D:
+    """Planar robot pose in the same frame as the Fleet Platform target."""
+
+    x: float
+    y: float
+    theta: float
+
+
+@dataclass(frozen=True)
+class TwistStep:
+    """One bounded velocity command used by the Isaac smoke motion shim."""
+
+    label: str
+    duration_seconds: float
+    linear_x: float
+    angular_z: float
+
+
+@dataclass(frozen=True)
+class MotionPlan:
+    """Dry-runnable description of the /cmd_vel sequence for a platform command."""
+
+    command_id: str
+    command_type: str
+    topic: str
+    rate_hz: float
+    pose_source: str
+    steps: tuple[TwistStep, ...]
 
 
 @dataclass
@@ -91,6 +152,7 @@ class EdgeAgentState:
     last_seen_command_sequence: int
     last_acknowledged_command_id: str | None = None
     current_mission_id: str | None = None
+    latest_pose: Pose2D | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +162,14 @@ class WebSocketFrame:
     opcode: int
     payload: bytes
     frame_bytes: int
+
+
+@dataclass(frozen=True)
+class PlatformReply:
+    """Outbound edge reply plus the accepted command that may drive local motion."""
+
+    message: dict[str, Any]
+    accepted_command: dict[str, Any] | None = None
 
 
 class EdgeWebSocketClient:
@@ -369,6 +439,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--print-motion-plan",
+        action="store_true",
+        help=(
+            "with --command-fixture, print the dry-run /cmd_vel plan alongside "
+            "the ack without requiring ROS2"
+        ),
+    )
+    parser.add_argument(
+        "--motion-plan-pose",
+        help=(
+            "current pose for --print-motion-plan as x,y,theta; defaults to an "
+            "origin fallback when omitted"
+        ),
+    )
+    parser.add_argument(
         "--print-url",
         action="store_true",
         help="print the derived edge WebSocket URL and exit",
@@ -441,7 +526,58 @@ def read_config(args: argparse.Namespace) -> SenderConfig:
             "ISAAC_EDGE_EMITTER_TIMEOUT_SECONDS",
             telemetry_timeout_seconds + 5.0,
         ),
+        motion=read_motion_config(),
     )
+
+
+# Loads the bounded /cmd_vel shim settings without changing the edge protocol.
+def read_motion_config() -> MotionConfig:
+    config = MotionConfig(
+        enabled=read_bool_env("ISAAC_EDGE_CMD_VEL_ENABLED", default=True),
+        topic=first_env("ISAAC_EDGE_CMD_VEL_TOPIC", default=DEFAULT_CMD_VEL_TOPIC),
+        rate_hz=read_positive_float_env(
+            "ISAAC_EDGE_CMD_VEL_RATE_HZ",
+            DEFAULT_CMD_VEL_RATE_HZ,
+        ),
+        linear_x_mps=read_positive_float_env(
+            "ISAAC_EDGE_CMD_VEL_LINEAR_X",
+            DEFAULT_CMD_VEL_LINEAR_X,
+        ),
+        angular_z_radps=read_positive_float_env(
+            "ISAAC_EDGE_CMD_VEL_ANGULAR_Z",
+            DEFAULT_CMD_VEL_ANGULAR_Z,
+        ),
+        min_forward_seconds=read_non_negative_float_env(
+            "ISAAC_EDGE_CMD_VEL_MIN_FORWARD_SECONDS",
+            DEFAULT_CMD_VEL_MIN_FORWARD_SECONDS,
+        ),
+        max_forward_seconds=read_positive_float_env(
+            "ISAAC_EDGE_CMD_VEL_MAX_FORWARD_SECONDS",
+            DEFAULT_CMD_VEL_MAX_FORWARD_SECONDS,
+        ),
+        max_turn_seconds=read_positive_float_env(
+            "ISAAC_EDGE_CMD_VEL_MAX_TURN_SECONDS",
+            DEFAULT_CMD_VEL_MAX_TURN_SECONDS,
+        ),
+        stop_seconds=read_positive_float_env(
+            "ISAAC_EDGE_CMD_VEL_STOP_SECONDS",
+            DEFAULT_CMD_VEL_STOP_SECONDS,
+        ),
+        min_step_seconds=read_non_negative_float_env(
+            "ISAAC_EDGE_CMD_VEL_MIN_STEP_SECONDS",
+            DEFAULT_CMD_VEL_MIN_STEP_SECONDS,
+        ),
+        min_translation_meters=read_non_negative_float_env(
+            "ISAAC_EDGE_CMD_VEL_MIN_TRANSLATION_METERS",
+            DEFAULT_CMD_VEL_MIN_TRANSLATION_METERS,
+        ),
+    )
+    if config.max_forward_seconds < config.min_forward_seconds:
+        raise ValueError(
+            "ISAAC_EDGE_CMD_VEL_MAX_FORWARD_SECONDS must be greater than or equal "
+            "to ISAAC_EDGE_CMD_VEL_MIN_FORWARD_SECONDS"
+        )
+    return config
 
 
 # Returns the first non-blank environment variable value, or a required default.
@@ -463,10 +599,17 @@ def optional_env(name: str) -> str | None:
     return value.strip()
 
 
-# Reads common shell truthy values without accepting arbitrary text as true.
-def read_bool_env(name: str) -> bool:
-    value = os.environ.get(name, "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+# Reads common shell boolean values and rejects misspelled configuration.
+def read_bool_env(name: str, default: bool = False) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+    value = raw_value.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value")
 
 
 # Reads a positive floating point environment value.
@@ -478,6 +621,18 @@ def read_positive_float_env(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a number, got {raw_value!r}") from exc
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be a positive finite number")
+    return value
+
+
+# Reads a non-negative floating point environment value for optional thresholds.
+def read_non_negative_float_env(name: str, default: float) -> float:
+    raw_value = os.environ.get(name, str(default)).strip()
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number, got {raw_value!r}") from exc
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be a non-negative finite number")
     return value
 
 
@@ -576,7 +731,7 @@ def create_hello_message(
     }
 
 
-# Adds edge command state to telemetry before wrapping it for Fleet Platform.
+# Adds edge command state to telemetry and remembers the latest pose for motion planning.
 def create_edge_telemetry_message(
     config: SenderConfig,
     state: EdgeAgentState,
@@ -604,6 +759,7 @@ def create_edge_telemetry_message(
         del enriched_payload["currentMissionId"]
 
     validate_robot_telemetry_payload(enriched_payload, config.robot_id)
+    state.latest_pose = pose_from_telemetry_payload(enriched_payload)
     return {"type": EDGE_TELEMETRY_TYPE, "payload": enriched_payload}
 
 
@@ -612,11 +768,15 @@ def handle_platform_message(
     config: SenderConfig,
     state: EdgeAgentState,
     message: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> PlatformReply | None:
     message_type = message.get("type")
     if message_type == PLATFORM_COMMAND_TYPE:
         command = parse_command_envelope(message.get("payload"))
-        return create_command_ack_message(config, state, command)
+        outbound = create_command_ack_message(config, state, command)
+        accepted_command = (
+            command if outbound["payload"]["status"] == "ACCEPTED" else None
+        )
+        return PlatformReply(message=outbound, accepted_command=accepted_command)
 
     if message_type == PLATFORM_PING_TYPE:
         return None
@@ -861,6 +1021,396 @@ def require_positive_int(payload: dict[str, Any], key: str) -> int:
     return value
 
 
+# Extracts the validated telemetry pose for the next GO_TO_POSE motion plan.
+def pose_from_telemetry_payload(payload: dict[str, Any]) -> Pose2D:
+    pose = payload.get("pose")
+    if not isinstance(pose, dict):
+        raise ValueError("pose must be an object")
+    return Pose2D(
+        x=require_finite_number(pose, "x", "pose.x"),
+        y=require_finite_number(pose, "y", "pose.y"),
+        theta=require_finite_number(pose, "theta", "pose.theta"),
+    )
+
+
+# Parses an optional x,y,theta pose override for local motion-plan checks.
+def parse_motion_plan_pose(value: str | None) -> Pose2D | None:
+    raw_value = (
+        value if value is not None else optional_env("ISAAC_EDGE_MOTION_PLAN_POSE")
+    )
+    if raw_value is None:
+        return None
+
+    parts = [part.strip() for part in raw_value.split(",")]
+    if len(parts) != 3:
+        raise ValueError("motion plan pose must use x,y,theta")
+    try:
+        x, y, theta = (float(part) for part in parts)
+    except ValueError as exc:
+        raise ValueError("motion plan pose values must be numbers") from exc
+    for name, numeric_value in (("x", x), ("y", y), ("theta", theta)):
+        if not math.isfinite(numeric_value):
+            raise ValueError(f"motion plan pose {name} must be finite")
+    return Pose2D(x=x, y=y, theta=theta)
+
+
+# Builds a dry-runnable /cmd_vel plan from an accepted platform command.
+def create_motion_plan(
+    config: MotionConfig,
+    command: dict[str, Any],
+    current_pose: Pose2D | None,
+) -> MotionPlan:
+    if command["type"] == "CANCEL_MISSION":
+        return create_stop_motion_plan(config, command["commandId"], "CANCEL_MISSION")
+    if command["type"] != "GO_TO_POSE":
+        raise ValueError(f"unsupported motion command type: {command['type']}")
+
+    target = target_pose_from_command(command)
+    start_pose = current_pose or Pose2D(x=0.0, y=0.0, theta=0.0)
+    pose_source = "current-pose" if current_pose else "origin-fallback"
+    dx = target.x - start_pose.x
+    dy = target.y - start_pose.y
+    distance = math.hypot(dx, dy)
+    steps: list[TwistStep] = []
+
+    if distance >= config.min_translation_meters:
+        target_heading = math.atan2(dy, dx)
+        append_turn_step(
+            steps,
+            config,
+            "align to target",
+            normalize_angle_radians(target_heading - start_pose.theta),
+        )
+        append_forward_step(steps, config, "drive toward target", distance)
+        append_turn_step(
+            steps,
+            config,
+            "align to target yaw",
+            normalize_angle_radians(target.theta - target_heading),
+        )
+    else:
+        append_turn_step(
+            steps,
+            config,
+            "align to target yaw",
+            normalize_angle_radians(target.theta - start_pose.theta),
+        )
+
+    steps.append(stop_twist_step(config))
+    return MotionPlan(
+        command_id=command["commandId"],
+        command_type=command["type"],
+        topic=config.topic,
+        rate_hz=config.rate_hz,
+        pose_source=pose_source,
+        steps=tuple(steps),
+    )
+
+
+# Builds the zero-velocity plan used by CANCEL_MISSION and shutdown cleanup.
+def create_stop_motion_plan(
+    config: MotionConfig,
+    command_id: str,
+    command_type: str,
+) -> MotionPlan:
+    return MotionPlan(
+        command_id=command_id,
+        command_type=command_type,
+        topic=config.topic,
+        rate_hz=config.rate_hz,
+        pose_source="not-required",
+        steps=(stop_twist_step(config),),
+    )
+
+
+# Extracts the already-validated GO_TO_POSE target as a planar pose.
+def target_pose_from_command(command: dict[str, Any]) -> Pose2D:
+    payload = command["payload"]
+    if not isinstance(payload, dict) or not isinstance(payload.get("target"), dict):
+        raise ValueError("GO_TO_POSE payload target is required")
+    target = payload["target"]
+    return Pose2D(
+        x=require_finite_number(target, "x", "payload.target.x"),
+        y=require_finite_number(target, "y", "payload.target.y"),
+        theta=require_finite_number(target, "theta", "payload.target.theta"),
+    )
+
+
+# Appends a turn step when the angle is large enough to be visible and useful.
+def append_turn_step(
+    steps: list[TwistStep],
+    config: MotionConfig,
+    label: str,
+    angle_radians: float,
+) -> None:
+    duration_seconds = min(
+        config.max_turn_seconds,
+        abs(angle_radians) / config.angular_z_radps,
+    )
+    if duration_seconds < config.min_step_seconds:
+        return
+    angular_z = config.angular_z_radps if angle_radians >= 0 else -config.angular_z_radps
+    steps.append(
+        TwistStep(
+            label=label,
+            duration_seconds=duration_seconds,
+            linear_x=0.0,
+            angular_z=angular_z,
+        )
+    )
+
+
+# Appends a capped forward step so GO_TO_POSE produces movement without claiming Nav2.
+def append_forward_step(
+    steps: list[TwistStep],
+    config: MotionConfig,
+    label: str,
+    distance_meters: float,
+) -> None:
+    duration_seconds = min(
+        config.max_forward_seconds,
+        max(config.min_forward_seconds, distance_meters / config.linear_x_mps),
+    )
+    if duration_seconds < config.min_step_seconds:
+        return
+    steps.append(
+        TwistStep(
+            label=label,
+            duration_seconds=duration_seconds,
+            linear_x=config.linear_x_mps,
+            angular_z=0.0,
+        )
+    )
+
+
+# Creates the repeated zero Twist step that gives Isaac time to consume the stop.
+def stop_twist_step(config: MotionConfig) -> TwistStep:
+    return TwistStep(
+        label="stop",
+        duration_seconds=config.stop_seconds,
+        linear_x=0.0,
+        angular_z=0.0,
+    )
+
+
+# Normalizes angular deltas to the shortest [-pi, pi] turn direction.
+def normalize_angle_radians(value: float) -> float:
+    return math.atan2(math.sin(value), math.cos(value))
+
+
+# Converts a motion plan to JSON for no-ROS fixture validation.
+def motion_plan_to_json(plan: MotionPlan) -> dict[str, Any]:
+    return {
+        "commandId": plan.command_id,
+        "commandType": plan.command_type,
+        "topic": plan.topic,
+        "rateHz": plan.rate_hz,
+        "poseSource": plan.pose_source,
+        "steps": [
+            {
+                "label": step.label,
+                "durationSeconds": round(step.duration_seconds, 3),
+                "linearX": step.linear_x,
+                "angularZ": step.angular_z,
+            }
+            for step in plan.steps
+        ],
+    }
+
+
+# Formats a finite float for ROS2's inline YAML parser.
+def format_ros_float(value: float) -> str:
+    if not math.isfinite(value):
+        raise ValueError("Twist values must be finite")
+    return f"{value:.6f}"
+
+
+# Formats the Twist payload in the inline YAML accepted by ros2 topic pub.
+def twist_payload(linear_x: float, angular_z: float) -> str:
+    return (
+        "{linear: {x: "
+        f"{format_ros_float(linear_x)}, y: 0.0, z: 0.0"
+        "}, angular: {x: 0.0, y: 0.0, z: "
+        f"{format_ros_float(angular_z)}"
+        "}}"
+    )
+
+
+# Fails live mode before any ACCEPTED ack can promise a motion path that cannot run.
+def require_motion_runtime(config: MotionConfig) -> None:
+    if not config.enabled:
+        return
+    if shutil.which("ros2") is None:
+        raise RuntimeError(
+            "cannot enable /cmd_vel shim because ros2 is not on PATH; "
+            "source /opt/ros/humble/setup.bash inside the sidecar, or set "
+            "ISAAC_EDGE_CMD_VEL_ENABLED=false for ack-only validation"
+        )
+
+
+# Stops a ros2 topic pub process without leaving a long-running publisher behind.
+def terminate_process(process: subprocess.Popen[Any]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1.0)
+
+
+class CmdVelMotionShim:
+    """Runs one bounded /cmd_vel sequence at a time without blocking telemetry."""
+
+    def __init__(self, config: MotionConfig) -> None:
+        self.config = config
+        self._lock = threading.Lock()
+        self._stop_event: threading.Event | None = None
+        self._worker: threading.Thread | None = None
+        self._process: subprocess.Popen[Any] | None = None
+
+    # Converts an accepted platform command into a local smoke motion plan.
+    def apply_command(
+        self,
+        command: dict[str, Any],
+        current_pose: Pose2D | None,
+    ) -> None:
+        plan = create_motion_plan(self.config, command, current_pose)
+        if not self.config.enabled:
+            log(
+                "/cmd_vel shim disabled; accepted command will not publish motion "
+                f"commandId={plan.command_id}"
+            )
+            return
+        self._start_plan(plan)
+
+    # Requests a stop and publishes a final zero command when a plan is active.
+    def close(self) -> None:
+        if not self.config.enabled:
+            return
+        worker = self._stop_active()
+        if worker and worker.is_alive():
+            worker.join(timeout=0.5)
+        if worker:
+            self._run_plan(
+                create_stop_motion_plan(self.config, "shutdown", "CANCEL_MISSION"),
+                threading.Event(),
+            )
+
+    # Replaces any active plan with the newest accepted command.
+    def _start_plan(self, plan: MotionPlan) -> None:
+        previous_worker = self._stop_active()
+        if previous_worker and previous_worker.is_alive():
+            previous_worker.join(timeout=0.5)
+
+        stop_event = threading.Event()
+        worker = threading.Thread(
+            target=self._run_plan,
+            args=(plan, stop_event),
+            daemon=True,
+        )
+        with self._lock:
+            self._stop_event = stop_event
+            self._worker = worker
+        worker.start()
+        log(
+            "started /cmd_vel motion plan "
+            f"commandId={plan.command_id} commandType={plan.command_type} "
+            f"steps={len(plan.steps)} poseSource={plan.pose_source}"
+        )
+
+    # Signals the current worker and terminates the current ros2 publisher.
+    def _stop_active(self) -> threading.Thread | None:
+        with self._lock:
+            worker = self._worker
+            if self._stop_event:
+                self._stop_event.set()
+            if self._process:
+                terminate_process(self._process)
+                self._process = None
+            return worker
+
+    # Publishes each step in order, respecting cancellation between steps.
+    def _run_plan(self, plan: MotionPlan, stop_event: threading.Event) -> None:
+        try:
+            for step in plan.steps:
+                if stop_event.is_set():
+                    return
+                self._publish_step(plan, step, stop_event)
+        finally:
+            with self._lock:
+                if self._worker is threading.current_thread():
+                    self._worker = None
+                    self._stop_event = None
+                    self._process = None
+
+    # Runs ros2 topic pub for one bounded Twist step.
+    def _publish_step(
+        self,
+        plan: MotionPlan,
+        step: TwistStep,
+        stop_event: threading.Event,
+    ) -> None:
+        ros2_path = shutil.which("ros2")
+        if ros2_path is None:
+            log(
+                "cannot publish /cmd_vel because ros2 is not on PATH; "
+                "source /opt/ros/humble/setup.bash inside the sidecar"
+            )
+            stop_event.wait(step.duration_seconds)
+            return
+
+        command = [
+            ros2_path,
+            "topic",
+            "pub",
+            "-r",
+            format_ros_float(plan.rate_hz),
+            plan.topic,
+            "geometry_msgs/msg/Twist",
+            twist_payload(step.linear_x, step.angular_z),
+        ]
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except OSError as exc:
+            log(f"failed to start /cmd_vel publisher: {exc}")
+            stop_event.wait(step.duration_seconds)
+            return
+
+        with self._lock:
+            self._process = process
+        log(
+            "publishing /cmd_vel "
+            f"commandId={plan.command_id} label={step.label!r} "
+            f"duration={step.duration_seconds:.2f}s "
+            f"linear_x={step.linear_x:.3f} angular_z={step.angular_z:.3f}"
+        )
+
+        try:
+            startup_wait = min(0.2, step.duration_seconds)
+            if stop_event.wait(startup_wait):
+                return
+            if process.poll() is not None:
+                log(
+                    "/cmd_vel publisher exited early "
+                    f"commandId={plan.command_id} status={process.returncode}"
+                )
+                return
+            remaining_seconds = max(0.0, step.duration_seconds - startup_wait)
+            stop_event.wait(remaining_seconds)
+        finally:
+            terminate_process(process)
+            with self._lock:
+                if self._process is process:
+                    self._process = None
+
+
 # Prints progress to stderr so stdout can remain machine-readable in dry-run mode.
 def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
@@ -871,8 +1421,9 @@ def drain_platform_messages(
     config: SenderConfig,
     state: EdgeAgentState,
     client: EdgeWebSocketClient,
+    motion_shim: CmdVelMotionShim,
 ) -> None:
-    while process_one_platform_message(config, state, client, 0.0):
+    while process_one_platform_message(config, state, client, motion_shim, 0.0):
         pass
 
 
@@ -881,6 +1432,7 @@ def process_platform_messages_until(
     config: SenderConfig,
     state: EdgeAgentState,
     client: EdgeWebSocketClient,
+    motion_shim: CmdVelMotionShim,
     deadline: float,
 ) -> None:
     while True:
@@ -891,6 +1443,7 @@ def process_platform_messages_until(
             config,
             state,
             client,
+            motion_shim,
             min(config.command_poll_seconds, remaining_seconds),
         )
 
@@ -900,6 +1453,7 @@ def process_one_platform_message(
     config: SenderConfig,
     state: EdgeAgentState,
     client: EdgeWebSocketClient,
+    motion_shim: CmdVelMotionShim,
     timeout_seconds: float,
 ) -> bool:
     try:
@@ -911,25 +1465,27 @@ def process_one_platform_message(
         return False
 
     try:
-        outbound = handle_platform_message(config, state, message)
+        reply = handle_platform_message(config, state, message)
     except ValueError as exc:
         log(f"ignored invalid platform message: {exc}")
         return True
 
-    if outbound is None:
+    if reply is None:
         return True
 
-    client.send_json(outbound)
-    payload = outbound["payload"]
+    client.send_json(reply.message)
+    payload = reply.message["payload"]
     log(
         "sent edge.command_ack "
         f"commandId={payload['commandId']} status={payload['status']}"
     )
+    if reply.accepted_command:
+        motion_shim.apply_command(reply.accepted_command, state.latest_pose)
     return True
 
 
-# Builds one command ack from a fixture file without opening a network socket.
-def create_command_fixture_ack(config: SenderConfig) -> dict[str, Any]:
+# Builds one parsed command reply from a fixture without opening a network socket.
+def create_command_fixture_reply(config: SenderConfig) -> PlatformReply:
     if not config.command_fixture_file:
         raise ValueError("command fixture file is required")
     with open(config.command_fixture_file, "r", encoding="utf-8") as fixture_file:
@@ -938,10 +1494,32 @@ def create_command_fixture_ack(config: SenderConfig) -> dict[str, Any]:
     state = EdgeAgentState(
         last_seen_command_sequence=config.last_seen_command_sequence,
     )
-    outbound = handle_platform_message(config, state, message)
-    if outbound is None or outbound.get("type") != EDGE_COMMAND_ACK_TYPE:
+    reply = handle_platform_message(config, state, message)
+    if reply is None or reply.message.get("type") != EDGE_COMMAND_ACK_TYPE:
         raise ValueError("command fixture did not produce an edge.command_ack response")
-    return outbound
+    return reply
+
+
+# Builds one command ack from a fixture file without side effects.
+def create_command_fixture_ack(config: SenderConfig) -> dict[str, Any]:
+    return create_command_fixture_reply(config).message
+
+
+# Builds an ack plus dry-run motion plan for local command-to-/cmd_vel checks.
+def create_command_fixture_motion_result(
+    config: SenderConfig,
+    current_pose: Pose2D | None,
+) -> dict[str, Any]:
+    reply = create_command_fixture_reply(config)
+    motion_plan = None
+    if reply.accepted_command:
+        motion_plan = motion_plan_to_json(
+            create_motion_plan(config.motion, reply.accepted_command, current_pose)
+        )
+    return {
+        "ack": reply.message,
+        "motionPlan": motion_plan,
+    }
 
 
 # Runs either one dry-run wrapper or the live WebSocket streaming loop.
@@ -952,11 +1530,21 @@ def main(argv: list[str]) -> int:
         if args.print_url:
             print(config.edge_ws_url)
             return 0
+        if args.print_motion_plan and not config.command_fixture_file:
+            raise ValueError("--print-motion-plan requires --command-fixture")
 
         if config.command_fixture_file:
+            fixture_result = (
+                create_command_fixture_motion_result(
+                    config,
+                    parse_motion_plan_pose(args.motion_plan_pose),
+                )
+                if args.print_motion_plan
+                else create_command_fixture_ack(config)
+            )
             print(
                 json.dumps(
-                    create_command_fixture_ack(config),
+                    fixture_result,
                     separators=(",", ":"),
                 ),
                 flush=True,
@@ -977,6 +1565,8 @@ def main(argv: list[str]) -> int:
             )
             return 0
 
+        require_motion_runtime(config.motion)
+        motion_shim = CmdVelMotionShim(config.motion)
         client = EdgeWebSocketClient(config.edge_ws_url, config.connect_timeout_seconds)
         client.connect()
         try:
@@ -986,10 +1576,11 @@ def main(argv: list[str]) -> int:
                 config,
                 state,
                 client,
+                motion_shim,
                 time.monotonic() + config.command_poll_seconds,
             )
             while True:
-                drain_platform_messages(config, state, client)
+                drain_platform_messages(config, state, client, motion_shim)
                 started_at = time.monotonic()
                 payload = read_telemetry_payload(config)
                 message = create_edge_telemetry_message(config, state, payload)
@@ -1002,8 +1593,15 @@ def main(argv: list[str]) -> int:
                     0.0,
                     config.heartbeat_seconds - elapsed_seconds,
                 )
-                process_platform_messages_until(config, state, client, next_heartbeat)
+                process_platform_messages_until(
+                    config,
+                    state,
+                    client,
+                    motion_shim,
+                    next_heartbeat,
+                )
         finally:
+            motion_shim.close()
             client.close()
     except KeyboardInterrupt:
         return 130

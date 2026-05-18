@@ -124,7 +124,9 @@ cd ~/isaac-launchable/isaac-lab
 docker compose --profile probe run --rm ros2-probe bash -lc 'curl -i -m 10 -H "ngrok-skip-browser-warning: true" https://<ngrok-host>/health/live'
 ```
 
-Then start the sender with the same base URL:
+Then start the sender with the same base URL. The `/cmd_vel` command shim is
+enabled by default; accepted Fleet Platform commands will now publish local
+Twist steps while telemetry continues streaming:
 
 ```sh
 cd ~/isaac-launchable/isaac-lab
@@ -145,24 +147,38 @@ Platform:
 bash sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --command-fixture sim/isaac-sim/fixtures/platform-command.json
 ```
 
+Use `--print-motion-plan` to validate the command-to-`/cmd_vel` planning without
+ROS2:
+
+```sh
+bash sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --command-fixture sim/isaac-sim/fixtures/platform-command.json --print-motion-plan --motion-plan-pose 0,0,0
+bash sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --command-fixture sim/isaac-sim/fixtures/platform-cancel-command.json --print-motion-plan
+```
+
 Expected edge evidence:
 
 - stdout in dry-run mode is one `edge.telemetry` JSON object;
 - stdout in command fixture mode is one valid `edge.command_ack` JSON object;
+- stdout with `--print-motion-plan` includes the ack plus a bounded motion plan;
 - live mode logs `connected to Fleet Platform edge socket`;
 - live mode logs one `sent edge.telemetry eventId=...` line per heartbeat;
 - live mode logs `sent edge.command_ack commandId=... status=...` after a
   valid `platform.command`;
+- live mode logs `started /cmd_vel motion plan` after an accepted `GO_TO_POSE`
+  and `publishing /cmd_vel` for each Twist step;
 - ngrok mode uses `wss://<ngrok-host>/edge/connect?robotId=robot-a` in the
   connected log line;
 - Fleet Platform accepts the frame without a protocol change;
-- Operator UI shows fresh telemetry and a moving pose after `/cmd_vel` moves
-  Nova Carter.
+- Operator UI shows fresh telemetry and a moving pose after the accepted
+  command automatically moves Nova Carter.
 
 The Isaac sender acknowledges `GO_TO_POSE` and `CANCEL_MISSION` commands and
-rejects unsupported command types with an explicit ack. It does not yet map
-platform commands into ROS2 actions or `/cmd_vel`; keep that motion path in the
-separate smoke command until the command-to-ROS2 slice is implemented.
+rejects unsupported command types with an explicit ack. Accepted `GO_TO_POSE`
+commands publish a simple turn/forward/yaw/stop `/cmd_vel` sequence based on the
+latest odometry pose, capped for smoke-test visibility. Accepted
+`CANCEL_MISSION` commands stop any active plan and publish zero velocity. The
+ack still means received/accepted by the edge adapter, not that Nova Carter
+reached the target.
 
 ## Validated First Run
 
@@ -208,6 +224,8 @@ semantic labels, generated datasets, or maps to Fleet Platform.
   robot movement.
 - Edge adapter emits a valid `edge.telemetry` message.
 - Fleet Platform accepts the telemetry without protocol changes.
+- Accepted Fleet Platform `GO_TO_POSE` commands produce automatic `/cmd_vel`
+  movement, and accepted `CANCEL_MISSION` commands publish zero velocity.
 - Operator UI shows fresh telemetry and a robot pose update.
 
 ## Case Study Evidence

@@ -1,0 +1,21 @@
+{
+  "type": "platform.command",
+  "payload": {
+    "schemaVersion": "command.envelope.v1",
+    "commandId": "cmd_isaac_cancel_fixture_001",
+    "missionId": "mission_isaac_fixture_001",
+    "robotId": "nova-carter",
+    "type": "CANCEL_MISSION",
+    "idempotencyKey": "isaac-fixture:mission_isaac_fixture_001:cancel",
+    "sequence": 43,
+    "issuedAt": "2026-05-10T12:00:01.000Z",
+    "expiresAt": "2026-05-10T12:00:11.000Z",
+    "requiresAck": true,
+    "safetyClass": "NORMAL",
+    "correlationId": "corr_isaac_cancel_fixture_001",
+    "causationId": "evt_isaac_cancel_fixture_001",
+    "payload": {
+      "reason": "operator_cancelled"
+    }
+  }
+}

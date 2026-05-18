@@ -215,6 +215,19 @@ snapshot separately:
 curl http://127.0.0.1:4010/robots/robot-a
 ```
 
+Before live command testing, validate the command-to-motion plan without ROS2:
+
+```sh
+bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --command-fixture /roboops/sim/isaac-sim/fixtures/platform-command.json --print-motion-plan --motion-plan-pose 0,0,0
+bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh --command-fixture /roboops/sim/isaac-sim/fixtures/platform-cancel-command.json --print-motion-plan
+```
+
+During live testing, create a `GO_TO_POSE` mission for `robot-a` from the
+Operator UI. The sender should log an accepted `edge.command_ack`, then
+`started /cmd_vel motion plan` and one `publishing /cmd_vel` line per Twist
+step. Cancelling the mission should log another accepted ack and a zero-velocity
+stop step.
+
 ## If The Probe Fails
 
 If Docker rejects IPC sharing with:

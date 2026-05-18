@@ -121,6 +121,7 @@ Use these files when creating or running the first Brev environment:
 | `launchable/sidecar-probe.md` | Defines the next bounded spike for sample extraction near Isaac |
 | `scenarios/telemetry-smoke.md` | Step-by-step first telemetry smoke scenario |
 | `fixtures/platform-command.json` | Local `platform.command` fixture for ack validation |
+| `fixtures/platform-cancel-command.json` | Local `CANCEL_MISSION` fixture for stop-plan validation |
 | `fixtures/robot-telemetry.json` | Local `robot.telemetry.v1` fixture for dry-run validation |
 | `scripts/probe-ros2-topics.sh` | Captures ROS2 topic evidence before wiring the edge adapter |
 | `scripts/run-ros2-sidecar-probe.sh` | Runs the probe in a ROS2 sidecar sharing the Isaac container network |
@@ -145,7 +146,7 @@ The first adapter should consume only common ROS2 messages:
 | --- | --- |
 | Sim time | `/clock` |
 | Robot pose | `/chassis/odom`, with `/tf` fallback |
-| Robot command input | Nav2 action, velocity topic, or a project-specific command adapter |
+| Robot command input | Bounded `/cmd_vel` smoke shim first; Nav2/action mapping later |
 | Basic health | Diagnostics, watchdog state, or adapter policy |
 | Battery | Battery plugin, diagnostic topic, or configured fallback |
 
@@ -207,6 +208,27 @@ The `edge.telemetry` payload remains `robot.telemetry.v1`:
 | `lastSeenCommandSequence` | Highest command sequence processed by the edge |
 | `edgeAgentVersion` | Edge-agent build/configuration |
 
+The sender keeps the Fleet Platform command protocol unchanged. Accepted
+`GO_TO_POSE` commands start a non-blocking smoke motion plan on `/cmd_vel`:
+turn toward the target from the latest `/chassis/odom` pose when available,
+publish a capped forward command, optionally align to the target yaw, and send a
+final zero velocity. If no telemetry has arrived yet, the plan uses an origin
+pose fallback so fixture and first-command checks remain deterministic.
+
+Accepted `CANCEL_MISSION` commands stop any active plan and publish repeated
+zero velocity. Acks still mean only that the command was received and accepted
+by the edge adapter; they do not claim target arrival or navigation success.
+
+Useful shim overrides:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ISAAC_EDGE_CMD_VEL_ENABLED` | `true` | Disable only when validating edge acks without motion |
+| `ISAAC_EDGE_CMD_VEL_TOPIC` | `/cmd_vel` | ROS2 Twist topic for Nova Carter command input |
+| `ISAAC_EDGE_CMD_VEL_RATE_HZ` | `10` | Publish rate for each bounded Twist step |
+| `ISAAC_EDGE_CMD_VEL_LINEAR_X` | `0.25` | Forward speed for the smoke plan |
+| `ISAAC_EDGE_CMD_VEL_ANGULAR_Z` | `0.5` | Turn speed for heading and yaw alignment |
+
 ## First Smoke Scenario
 
 1. Run Isaac Sim on an RTX Linux host or cloud VM.
@@ -220,3 +242,5 @@ The `edge.telemetry` payload remains `robot.telemetry.v1`:
    reconnect reconciliation without changing the cloud contract.
 8. Receive `platform.command` messages over the same edge socket and return
    `edge.command_ack` responses.
+9. Map accepted `GO_TO_POSE` and `CANCEL_MISSION` commands to the bounded
+   `/cmd_vel` shim, while keeping acks independent from target arrival.
