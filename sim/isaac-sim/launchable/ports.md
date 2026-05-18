@@ -29,5 +29,15 @@ and let the edge adapter connect outbound:
 Brev Isaac runtime -> outbound WebSocket -> Fleet Platform /edge/connect
 ```
 
+When Fleet Platform runs on the Mac and Brev cannot reach it directly, expose
+only Fleet Platform's `4010/tcp` HTTP/WebSocket port through a temporary tunnel
+such as ngrok. Use the public `https://...` tunnel base URL as
+`FLEET_PLATFORM_URL`; the Isaac sender converts it to `wss://.../edge/connect`.
+Check reachability from the ROS2 sidecar before running the sender:
+
+```sh
+curl -i -m 10 -H "ngrok-skip-browser-warning: true" https://<ngrok-host>/health/live
+```
+
 Do not expose ROS2/DDS, Isaac internals, or the edge adapter as public inbound
 services.

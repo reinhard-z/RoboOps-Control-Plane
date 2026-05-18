@@ -108,6 +108,29 @@ cd ~/isaac-launchable/isaac-lab
 docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && FLEET_PLATFORM_URL=http://fleet-platform.example:4010 ISAAC_EDGE_ROBOT_ID=robot-a ISAAC_EDGE_HEARTBEAT_SECONDS=1 bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh'
 ```
 
+When Fleet Platform runs on the Mac and Isaac runs in Brev, expose the Mac
+Fleet Platform port through a temporary outbound tunnel such as ngrok:
+
+```sh
+ngrok http 4010
+```
+
+Use the printed `https://...ngrok-free...` base URL without `/health/live` or a
+port suffix. Validate the tunnel from the Brev sidecar before starting the
+sender:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'curl -i -m 10 -H "ngrok-skip-browser-warning: true" https://<ngrok-host>/health/live'
+```
+
+Then start the sender with the same base URL:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && FLEET_PLATFORM_URL=https://<ngrok-host> ISAAC_EDGE_ROBOT_ID=robot-a ISAAC_EDGE_HEARTBEAT_SECONDS=1 bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh'
+```
+
 Use dry-run first when checking the edge frame without opening a WebSocket:
 
 ```sh
@@ -130,6 +153,8 @@ Expected edge evidence:
 - live mode logs one `sent edge.telemetry eventId=...` line per heartbeat;
 - live mode logs `sent edge.command_ack commandId=... status=...` after a
   valid `platform.command`;
+- ngrok mode uses `wss://<ngrok-host>/edge/connect?robotId=robot-a` in the
+  connected log line;
 - Fleet Platform accepts the frame without a protocol change;
 - Operator UI shows fresh telemetry and a moving pose after `/cmd_vel` moves
   Nova Carter.
