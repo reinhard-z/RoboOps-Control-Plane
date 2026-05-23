@@ -136,6 +136,15 @@ docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/hum
 When Fleet Platform is hosted on AWS with the Fargate runbook, use the hosted
 HTTPS base URL instead of the ngrok URL:
 
+If this is a fresh Brev Launchable, install the RoboOps sidecar override first.
+The upstream Launchable does not include `ros2-probe` by default:
+
+```sh
+cd ~
+[ -d RoboOps-Control-Plane/.git ] || git clone https://github.com/reinhard-z/RoboOps-Control-Plane.git RoboOps-Control-Plane
+bash ~/RoboOps-Control-Plane/sim/isaac-sim/launchable/configure-ros2-probe-sidecar.sh
+```
+
 ```sh
 cd ~/isaac-launchable/isaac-lab
 docker compose --profile probe run --rm ros2-probe bash -lc 'curl -fsS -m 10 https://<hosted-fleet-platform-host>/health/live'

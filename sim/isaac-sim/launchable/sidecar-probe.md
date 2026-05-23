@@ -15,8 +15,23 @@ The goal is one sample from `/clock` and one pose source, preferably
 
 1. Start a fresh Isaac Launchable.
 2. Open browser VS Code.
-3. Add the Fast DDS/sidecar override from the "Working Compose Sidecar" section.
-4. Recreate the Launchable services.
+3. From the Brev host shell, make sure the RoboOps checkout exists beside the
+   Launchable checkout:
+
+```sh
+cd ~
+[ -d RoboOps-Control-Plane/.git ] || git clone https://github.com/reinhard-z/RoboOps-Control-Plane.git RoboOps-Control-Plane
+```
+
+4. Add or refresh the Fast DDS/sidecar override:
+
+```sh
+bash ~/RoboOps-Control-Plane/sim/isaac-sim/launchable/configure-ros2-probe-sidecar.sh
+```
+
+This creates the local `ros2-probe` Compose service used by the commands below.
+The upstream Isaac Launchable does not include that service by default.
+
 5. Start Isaac Sim from the browser VS Code terminal:
 
 ```sh
@@ -40,6 +55,15 @@ docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/hum
 ```
 
 ## Working Compose Sidecar
+
+For normal demo prep, use the checked-in setup script instead of pasting the
+override by hand:
+
+```sh
+bash ~/RoboOps-Control-Plane/sim/isaac-sim/launchable/configure-ros2-probe-sidecar.sh
+```
+
+The manual form below is kept as an audit trail for what the script writes.
 
 Create the Fast DDS UDP profile in the upstream Launchable checkout:
 

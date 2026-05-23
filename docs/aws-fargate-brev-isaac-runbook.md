@@ -362,7 +362,20 @@ aws elbv2 describe-target-health \
 
 ## Start The Brev Isaac Sender
 
-Keep Isaac Sim running on the Brev Launchable. From the Brev host:
+Keep Isaac Sim running on the Brev Launchable. The sender runs from the
+RoboOps `ros2-probe` sidecar, which is not part of the upstream Isaac
+Launchable until the local override is installed.
+
+From the Brev host, make sure the RoboOps checkout exists and install the
+sidecar override:
+
+```sh
+cd ~
+[ -d RoboOps-Control-Plane/.git ] || git clone https://github.com/reinhard-z/RoboOps-Control-Plane.git RoboOps-Control-Plane
+bash ~/RoboOps-Control-Plane/sim/isaac-sim/launchable/configure-ros2-probe-sidecar.sh
+```
+
+Then move to the Launchable compose project:
 
 ```sh
 cd ~/isaac-launchable/isaac-lab

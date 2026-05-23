@@ -140,6 +140,13 @@ cd ~/isaac-launchable/isaac-lab
 docker compose --profile probe run --rm ros2-probe
 ```
 
+On a fresh Launchable, `ros2-probe` does not exist until the RoboOps sidecar
+override has been installed from the Brev host:
+
+```sh
+bash ~/RoboOps-Control-Plane/sim/isaac-sim/launchable/configure-ros2-probe-sidecar.sh
+```
+
 ## ROS2 CLI On The Brev Host
 
 The browser VS Code container has Isaac Sim but no `sudo`, so do not install
