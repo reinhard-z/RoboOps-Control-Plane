@@ -4,9 +4,19 @@ This runbook is for collecting portfolio evidence from a short-lived
 AWS/Kubernetes demo. It is not a production hosting guide and does not add app
 behavior, robot hardware support, or infrastructure manifests.
 
-Use it after the Fleet Platform, Operator UI, and cloud-edge simulator images
-are available in a registry and an environment-specific Kubernetes deployment
-has been prepared outside the public reference manifests.
+## Current Fargate + Brev Isaac Path
+
+For the current AWS-hosted cloud plus Brev Isaac slice, use
+[AWS Fargate + Brev Isaac Runbook](aws-fargate-brev-isaac-runbook.md). That
+path deploys only Fleet Platform and Operator UI on ECS/Fargate and keeps Isaac
+Sim on NVIDIA Brev.
+
+## Kubernetes Simulator Path
+
+Use this Kubernetes simulator path after the Fleet Platform, Operator UI, and
+cloud-edge simulator images are available in a registry and an
+environment-specific Kubernetes deployment has been prepared outside the public
+reference manifests.
 
 ## Demo Boundary
 

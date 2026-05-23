@@ -1,0 +1,500 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Short-lived RoboOps cloud demo stack for Fleet Platform and Operator UI on ECS Fargate behind an ALB.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the public ALB and Fargate tasks run.
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two public subnets in the selected VPC.
+  AcmCertificateArn:
+    Type: String
+    Description: ACM certificate ARN in this region covering both public host names.
+  HostedZoneId:
+    Type: String
+    Default: ""
+    Description: Optional Route 53 hosted zone id for alias records. Leave blank to manage DNS manually.
+  FleetPlatformHostName:
+    Type: String
+    Description: Public HTTPS host name for Fleet Platform, for example fleet.example.com.
+  OperatorUiHostName:
+    Type: String
+    Description: Public HTTPS host name for Operator UI, for example operator.example.com.
+  FleetPlatformImageUri:
+    Type: String
+    Description: Immutable image URI for the Fleet Platform container.
+  OperatorUiImageUri:
+    Type: String
+    Description: Immutable image URI for the Operator UI container.
+  RobotId:
+    Type: String
+    Default: robot-a
+    Description: Robot id shown by Operator UI and used by the Brev Isaac sender.
+  CpuArchitecture:
+    Type: String
+    Default: X86_64
+    AllowedValues:
+      - X86_64
+      - ARM64
+    Description: Fargate CPU architecture that matches the pushed container images.
+  DemoMode:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Enables demo reset/fault endpoints when true.
+  DemoAdminTokenSecretArn:
+    Type: String
+    Default: ""
+    Description: Optional Secrets Manager secret ARN containing the demo admin token.
+  FleetPlatformCpu:
+    Type: String
+    Default: "512"
+    AllowedValues:
+      - "256"
+      - "512"
+      - "1024"
+    Description: Fargate CPU units for the Fleet Platform task.
+  FleetPlatformMemory:
+    Type: String
+    Default: "1024"
+    AllowedValues:
+      - "512"
+      - "1024"
+      - "2048"
+    Description: Fargate memory for the Fleet Platform task.
+  OperatorUiCpu:
+    Type: String
+    Default: "256"
+    AllowedValues:
+      - "256"
+      - "512"
+    Description: Fargate CPU units for the Operator UI task.
+  OperatorUiMemory:
+    Type: String
+    Default: "512"
+    AllowedValues:
+      - "512"
+      - "1024"
+    Description: Fargate memory for the Operator UI task.
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues:
+      - 1
+      - 3
+      - 7
+      - 14
+      - 30
+    Description: CloudWatch Logs retention for short-lived demo services.
+
+Conditions:
+  CreateDnsRecords: !Not [!Equals [!Ref HostedZoneId, ""]]
+  EnableDemoSecret: !Not [!Equals [!Ref DemoAdminTokenSecretArn, ""]]
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}-cluster"
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+      Policies: !If
+        - EnableDemoSecret
+        - - PolicyName: demo-secret-access
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: secretsmanager:GetSecretValue
+                  Resource: !Ref DemoAdminTokenSecretArn
+        - !Ref AWS::NoValue
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTPS ingress for RoboOps demo services.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows only ALB-to-task traffic for RoboOps containers.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 4010
+          ToPort: 4010
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 4020
+          ToPort: 4020
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets: !Ref PublicSubnetIds
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "300"
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: "443"
+            StatusCode: HTTP_301
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref AcmCertificateArn
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: "404"
+            ContentType: text/plain
+            MessageBody: unknown RoboOps host
+
+  FleetPlatformTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Protocol: HTTP
+      Port: 4010
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health/ready
+      HealthCheckIntervalSeconds: 15
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: "200"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+
+  OperatorUiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Protocol: HTTP
+      Port: 4020
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health/live
+      HealthCheckIntervalSeconds: 15
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: "200"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+
+  FleetPlatformListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 10
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Ref FleetPlatformHostName
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref FleetPlatformTargetGroup
+
+  OperatorUiListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 20
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Ref OperatorUiHostName
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref OperatorUiTargetGroup
+
+  FleetPlatformLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}/fleet-platform"
+      RetentionInDays: !Ref LogRetentionDays
+
+  OperatorUiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}/operator-ui"
+      RetentionInDays: !Ref LogRetentionDays
+
+  FleetPlatformTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-fleet-platform"
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref FleetPlatformCpu
+      Memory: !Ref FleetPlatformMemory
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: !Ref CpuArchitecture
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: fleet-platform
+          Image: !Ref FleetPlatformImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 4010
+              Protocol: tcp
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: HOST
+              Value: 0.0.0.0
+            - Name: PORT
+              Value: "4010"
+            - Name: FLEET_PERSISTENCE_MODE
+              Value: in-memory
+            - Name: CORS_ALLOW_ORIGIN
+              Value: !Sub "https://${OperatorUiHostName}"
+            - Name: DEMO_MODE
+              Value: !Ref DemoMode
+            - Name: DEMO_ROBOT_ID
+              Value: !Ref RobotId
+          Secrets: !If
+            - EnableDemoSecret
+            - - Name: DEMO_ADMIN_TOKEN
+                ValueFrom: !Ref DemoAdminTokenSecretArn
+            - !Ref AWS::NoValue
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - node -e "fetch('http://127.0.0.1:4010/health/live').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 20
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref FleetPlatformLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  OperatorUiTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-operator-ui"
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref OperatorUiCpu
+      Memory: !Ref OperatorUiMemory
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: !Ref CpuArchitecture
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: operator-ui
+          Image: !Ref OperatorUiImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 4020
+              Protocol: tcp
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: HOST
+              Value: 0.0.0.0
+            - Name: PORT
+              Value: "4020"
+            - Name: FLEET_PLATFORM_URL
+              Value: !Sub "https://${FleetPlatformHostName}"
+            - Name: OPERATOR_ROBOT_ID
+              Value: !Ref RobotId
+            - Name: OPERATOR_DEMO_MODE
+              Value: !Ref DemoMode
+          Secrets: !If
+            - EnableDemoSecret
+            - - Name: OPERATOR_DEMO_ADMIN_TOKEN
+                ValueFrom: !Ref DemoAdminTokenSecretArn
+            - !Ref AWS::NoValue
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - node -e "fetch('http://127.0.0.1:4020/health/live').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 20
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref OperatorUiLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  FleetPlatformService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - FleetPlatformListenerRule
+    Properties:
+      ServiceName: fleet-platform
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      DesiredCount: 1
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 0
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+          Subnets: !Ref PublicSubnetIds
+      LoadBalancers:
+        - ContainerName: fleet-platform
+          ContainerPort: 4010
+          TargetGroupArn: !Ref FleetPlatformTargetGroup
+      TaskDefinition: !Ref FleetPlatformTaskDefinition
+
+  OperatorUiService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - OperatorUiListenerRule
+    Properties:
+      ServiceName: operator-ui
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      DesiredCount: 1
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+          Subnets: !Ref PublicSubnetIds
+      LoadBalancers:
+        - ContainerName: operator-ui
+          ContainerPort: 4020
+          TargetGroupArn: !Ref OperatorUiTargetGroup
+      TaskDefinition: !Ref OperatorUiTaskDefinition
+
+  FleetPlatformDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDnsRecords
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref FleetPlatformHostName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt PublicLoadBalancer.DNSName
+        HostedZoneId: !GetAtt PublicLoadBalancer.CanonicalHostedZoneID
+
+  OperatorUiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDnsRecords
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref OperatorUiHostName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt PublicLoadBalancer.DNSName
+        HostedZoneId: !GetAtt PublicLoadBalancer.CanonicalHostedZoneID
+
+Outputs:
+  ClusterName:
+    Description: ECS cluster name.
+    Value: !Ref Cluster
+  LoadBalancerDnsName:
+    Description: Public ALB DNS name for manual DNS aliases when HostedZoneId is blank.
+    Value: !GetAtt PublicLoadBalancer.DNSName
+  FleetPlatformUrl:
+    Description: Public Fleet Platform base URL for Operator UI and Brev Isaac sender.
+    Value: !Sub "https://${FleetPlatformHostName}"
+  OperatorUiOrigin:
+    Description: Public Operator UI origin configured in Fleet Platform CORS.
+    Value: !Sub "https://${OperatorUiHostName}"
+  FleetPlatformTargetGroupArn:
+    Description: Target group used by Fleet Platform health checks.
+    Value: !Ref FleetPlatformTargetGroup
+  OperatorUiTargetGroupArn:
+    Description: Target group used by Operator UI health checks.
+    Value: !Ref OperatorUiTargetGroup

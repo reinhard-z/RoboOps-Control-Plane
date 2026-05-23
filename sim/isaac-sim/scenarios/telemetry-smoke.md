@@ -133,6 +133,19 @@ cd ~/isaac-launchable/isaac-lab
 docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && FLEET_PLATFORM_URL=https://<ngrok-host> ISAAC_EDGE_ROBOT_ID=robot-a ISAAC_EDGE_HEARTBEAT_SECONDS=1 bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh'
 ```
 
+When Fleet Platform is hosted on AWS with the Fargate runbook, use the hosted
+HTTPS base URL instead of the ngrok URL:
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'curl -fsS -m 10 https://<hosted-fleet-platform-host>/health/live'
+```
+
+```sh
+cd ~/isaac-launchable/isaac-lab
+docker compose --profile probe run --rm ros2-probe bash -lc 'source /opt/ros/humble/setup.bash && FLEET_PLATFORM_URL=https://<hosted-fleet-platform-host> ISAAC_EDGE_ROBOT_ID=robot-a ISAAC_EDGE_HEARTBEAT_SECONDS=1 bash /roboops/sim/isaac-sim/scripts/send-odom-telemetry-edge.sh'
+```
+
 Use dry-run first when checking the edge frame without opening a WebSocket:
 
 ```sh

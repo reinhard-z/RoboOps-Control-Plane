@@ -31,6 +31,10 @@ agent, but it is still a boundary skeleton rather than a real robot adapter.
 - `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
   `edge.hello`, accepts `GO_TO_POSE` and `CANCEL_MISSION`, emits accepted acks,
   sends heartbeats, and can simulate stale telemetry or reconnect handshakes.
+- `sim/isaac-sim`: preferred on-demand robotics simulation smoke path. It uses
+  NVIDIA Brev / Isaac Launchable, Isaac Sim, Nova Carter ROS scenes, ROS2
+  sidecar probes, and sender scripts that feed the existing Fleet Platform edge
+  contract without changing the cloud API.
 - `edge/ros2-edge-agent-cpp`: ROS2 Jazzy C++ edge agent scaffold. It loads the
   Fleet Platform URL, robot id, and edge agent version; derives the same
   outbound `/edge/connect?robotId=...` URL as the simulator; and provides C++

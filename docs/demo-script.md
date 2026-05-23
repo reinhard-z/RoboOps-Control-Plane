@@ -17,6 +17,11 @@ a hosted robot.
 - GitOps and Kubernetes docs are production references for software rollout;
   they are not part of mission dispatch.
 
+This script is intentionally the default local reviewer path. For robotics
+simulation evidence with Isaac Sim, Nova Carter ROS scenes, ROS2 topic probes,
+and the same Fleet Platform edge contract, use
+[`sim/isaac-sim`](../sim/isaac-sim/README.md).
+
 ## Start The Stack
 
 Run each command from the repo root in a separate terminal.

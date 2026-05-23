@@ -23,9 +23,10 @@ operator creates mission
 | --- | --- |
 | Fleet Platform | Implemented TypeScript API with REST reads/actions, SSE UI events, outbound edge WebSocket gateway, in-memory state by default, optional Postgres repositories, transactional outbox write path, metrics, and structured incident logs. |
 | Cloud-edge simulator | Implemented local robot simulator for command ack, telemetry, stale telemetry, disconnect, reconnect, and simple pose movement. This is the default reviewer demo robot. |
+| Isaac/Brev robotics smoke path | Documented and validated on-demand simulation path under `sim/isaac-sim`. It uses NVIDIA Brev / Isaac Launchable, Isaac Sim, Nova Carter ROS scenes, ROS2 sidecar probes, and the same Fleet Platform edge contract. |
 | Operator UI | Implemented lightweight browser console for mission creation/cancel, robot freshness, mission state, map movement, demo fault controls, and event timeline. |
 | Event worker | Implemented outbox publisher worker for durable Postgres-backed runs. |
-| ROS2 edge agent | Skeleton only. It mirrors protocol/configuration shape but does not yet connect to WebSocket, ROS2 topics/actions, navigation, SLAM, Isaac Sim, or hardware. |
+| ROS2 edge agent | Skeleton only. It mirrors protocol/configuration shape but does not yet implement WebSocket transport, ROS2 topics/actions, navigation, SLAM, Isaac Sim, or hardware. The Isaac/Brev smoke path currently uses adapter scripts under `sim/isaac-sim`, not this C++ agent. |
 | Kubernetes/GitOps | Production-reference manifests and rollout notes only. They document deploy patterns for software versions, not robot mission control. |
 
 ## Boundaries
@@ -34,7 +35,10 @@ operator creates mission
   Platform dispatches missions.
 - ROS2/DDS stays local to the robot-near runtime. The cloud API does not talk
   directly to ROS2/DDS.
-- The reviewer demo uses a simulator, not a hosted robot and not real hardware.
+- The default local reviewer demo uses a simulator, not a hosted robot and not
+  real hardware.
+- The Isaac/Brev smoke path is the preferred robotics simulation evidence path,
+  but it runs on demand rather than as the always-on public demo.
 - This project is not safety-certified and is not a production safety system.
 - It does not claim full Open-RMF, VDA5050, MassRobotics, navigation, SLAM, AI
   autonomy, or real hardware integration.
@@ -180,6 +184,9 @@ On Linux, add `--add-host=host.docker.internal:host-gateway` when using the
 - [Current architecture](docs/architecture/current-architecture.md) explains
   the API, domain, simulator, UI, persistence, observability, and deployment
   boundaries.
+- [AWS Fargate + Brev Isaac runbook](docs/aws-fargate-brev-isaac-runbook.md)
+  deploys only Fleet Platform and Operator UI to AWS and connects the Brev
+  Isaac sender outbound to the hosted Fleet Platform.
 - [AWS/Kubernetes demo runbook](docs/aws-kubernetes-demo-runbook.md) explains
   how to capture short-lived hosted demo evidence without expanding the project
   into a production hosting guide.
