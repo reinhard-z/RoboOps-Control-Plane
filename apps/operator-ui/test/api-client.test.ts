@@ -91,6 +91,27 @@ describe("operator UI API client", () => {
     );
   });
 
+  it("binds the default native fetch to the global object", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchThis: unknown;
+    globalThis.fetch = function (this: unknown) {
+      fetchThis = this;
+      return Promise.resolve(jsonResponse({ missions: [] }));
+    } as typeof fetch;
+
+    try {
+      const api = new FleetPlatformApiClient({
+        apiBaseUrl: "http://fleet.test"
+      });
+
+      await api.listMissions();
+
+      expect(fetchThis).toBe(globalThis);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("requires demo admin config before calling protected demo endpoints", async () => {
     const api = new FleetPlatformApiClient({
       apiBaseUrl: "http://fleet.test",

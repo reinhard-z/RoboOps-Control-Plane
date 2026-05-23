@@ -26,7 +26,8 @@ export class FleetPlatformApiClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly config: FleetPlatformApiClientConfig) {
-    this.fetchImpl = config.fetchImpl ?? fetch;
+    // Native browser fetch can throw if it is called later with this client as `this`.
+    this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   /** Builds the browser URL used to subscribe to Fleet Platform SSE events. */
