@@ -200,3 +200,7 @@ On Linux, add `--add-host=host.docker.internal:host-gateway` when using the
 - [Local Docker Compose](infra/docker-compose/README.md), [Kubernetes edge
   reference](infra/k8s/edge/README.md), and [ArgoCD references](infra/argocd/applications/README.md)
   are deployment references, not required for the local incident demo.
+
+## Usage Notice
+
+This repository is public for portfolio and case-study review. See [NOTICE.md](NOTICE.md).
