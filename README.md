@@ -21,27 +21,43 @@ path is separate evidence for ROS2 and NVIDIA Isaac Sim integration.
 
 **Command dispatch flow**
 
+<img src="docs/assets/roboops-command.gif" alt="Animated RoboOps command dispatch flow" width="800">
+
 The command animation shows the operator creating a mission, Fleet Platform
 translating it into an edge command, and the robot-near runtime acknowledging
 the work back to the cloud.
 
-<img src="docs/assets/roboops-command.gif" alt="Animated RoboOps command dispatch flow" width="800">
+**Stale telemetry recovery flow**
 
-**Telemetry freshness and reconnect flow**
+<img src="docs/assets/roboops-recovery.gif" alt="Animated RoboOps stale telemetry recovery flow" width="800">
 
-The heartbeat animation shows the other side of the incident: telemetry updates
-stop, Fleet Platform marks the robot degraded, and the reconnect handshake
-reconciles cloud and edge state.
+The recovery animation shows the incident path: telemetry stops before it
+reaches Fleet Platform, missed heartbeats become stale telemetry, the Operator
+UI receives a degraded robot state over live updates, and reconnect
+reconciliation restores cloud and edge state before telemetry resumes.
+
+**Operator console during stale telemetry**
+
+![Operator console showing stale telemetry and degraded robot state](docs/assets/operator-console-stale.png)
+
+The stale-state preview shows the operator-facing result of the incident:
+the robot is degraded, telemetry is no longer fresh, and the event timeline
+keeps the failure visible instead of hiding it behind the simulator.
+
+**Telemetry and heartbeat flow**
 
 <img src="docs/assets/roboops-heartbeat.gif" alt="Animated RoboOps telemetry heartbeat flow" width="800">
 
+The heartbeat animation shows the normal telemetry path from the robot-near
+runtime back to Fleet Platform and onward to the Operator UI.
+
 **Operator UI with Isaac simulation evidence**
+
+![Operator UI connected to the Isaac simulation path](docs/assets/operatorui-and-isaac.png)
 
 The Operator UI preview shows the browser console used for mission state, robot
 health, map movement, demo fault controls, and the event timeline while the
 Isaac/Brev path provides robotics simulation evidence.
-
-![Operator UI connected to the Isaac simulation path](docs/assets/operatorui-and-isaac.png)
 
 The core incident flow is:
 
