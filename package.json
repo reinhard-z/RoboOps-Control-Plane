@@ -10,7 +10,6 @@
   "scripts": {
     "build": "tsc -b --pretty false",
     "dev": "pnpm -r --parallel --if-present dev",
-    "lint": "tsc -b --pretty false",
     "test": "pnpm -r --if-present test",
     "typecheck": "tsc -b --pretty false"
   },
