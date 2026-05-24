@@ -54,7 +54,6 @@ The repo targets Node 22 or newer and uses pnpm workspaces.
 ```sh
 pnpm install
 pnpm dev
-pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build

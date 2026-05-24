@@ -40,7 +40,6 @@ packages, infrastructure, simulations, docs, and tests.
 Common commands:
 
 ```sh
-pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
