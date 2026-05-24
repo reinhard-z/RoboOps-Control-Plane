@@ -1,5 +1,7 @@
 # RoboOps Control Plane
 
+[![CI](https://github.com/reinhard-z/RoboOps-Control-Plane/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/reinhard-z/RoboOps-Control-Plane/actions/workflows/ci.yml)
+
 RoboOps Control Plane is a portfolio prototype for cloud-to-edge fleet
 operations with intermittently connected ROS2 robots. It focuses on mission
 dispatch, command acknowledgement, telemetry freshness, reconnect
@@ -19,15 +21,15 @@ operator creates mission
 
 ## What Exists Now
 
-| Area | Status |
-| --- | --- |
-| Fleet Platform | Implemented TypeScript API with REST reads/actions, SSE UI events, outbound edge WebSocket gateway, in-memory state by default, optional Postgres repositories, transactional outbox write path, metrics, and structured incident logs. |
-| Cloud-edge simulator | Implemented local robot simulator for command ack, telemetry, stale telemetry, disconnect, reconnect, and simple pose movement. This is the default reviewer demo robot. |
-| Isaac/Brev robotics smoke path | Documented and validated on-demand simulation path under `sim/isaac-sim`. It uses NVIDIA Brev / Isaac Launchable, Isaac Sim, Nova Carter ROS scenes, ROS2 sidecar probes, and the same Fleet Platform edge contract. |
-| Operator UI | Implemented lightweight browser console for mission creation/cancel, robot freshness, mission state, map movement, demo fault controls, and event timeline. |
-| Event worker | Implemented outbox publisher worker for durable Postgres-backed runs. |
-| ROS2 edge agent | Skeleton only. It mirrors protocol/configuration shape but does not yet implement WebSocket transport, ROS2 topics/actions, navigation, SLAM, Isaac Sim, or hardware. The Isaac/Brev smoke path currently uses adapter scripts under `sim/isaac-sim`, not this C++ agent. |
-| Kubernetes/GitOps | Production-reference manifests and rollout notes only. They document deploy patterns for software versions, not robot mission control. |
+| Area                           | Status                                                                                                                                                                                                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fleet Platform                 | Implemented TypeScript API with REST reads/actions, SSE UI events, outbound edge WebSocket gateway, in-memory state by default, optional Postgres repositories, transactional outbox write path, metrics, and structured incident logs.                                   |
+| Cloud-edge simulator           | Implemented local robot simulator for command ack, telemetry, stale telemetry, disconnect, reconnect, and simple pose movement. This is the default reviewer demo robot.                                                                                                  |
+| Isaac/Brev robotics smoke path | Documented and validated on-demand simulation path under `sim/isaac-sim`. It uses NVIDIA Brev / Isaac Launchable, Isaac Sim, Nova Carter ROS scenes, ROS2 sidecar probes, and the same Fleet Platform edge contract.                                                      |
+| Operator UI                    | Implemented lightweight browser console for mission creation/cancel, robot freshness, mission state, map movement, demo fault controls, and event timeline.                                                                                                               |
+| Event worker                   | Implemented outbox publisher worker for durable Postgres-backed runs.                                                                                                                                                                                                     |
+| ROS2 edge agent                | Skeleton only. It mirrors protocol/configuration shape but does not yet implement WebSocket transport, ROS2 topics/actions, navigation, SLAM, Isaac Sim, or hardware. The Isaac/Brev smoke path currently uses adapter scripts under `sim/isaac-sim`, not this C++ agent. |
+| Kubernetes/GitOps              | Production-reference manifests and rollout notes only. They document deploy patterns for software versions, not robot mission control.                                                                                                                                    |
 
 ## Boundaries
 
