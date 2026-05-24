@@ -7,7 +7,43 @@ operations with intermittently connected ROS2 robots. It focuses on mission
 dispatch, command acknowledgement, telemetry freshness, reconnect
 reconciliation, auditability, and operator visibility.
 
-The local demo shows one incident end to end:
+## Case Study Demo
+
+RoboOps demonstrates a cloud control plane that can dispatch work to a
+robot-near runtime, keep operators informed when telemetry goes stale, and
+reconcile state after the edge reconnects. The default demo path is intentionally
+local and reproducible: Fleet Platform, Operator UI, and a deterministic
+cloud-edge simulator run on one machine. It does not require real robot hardware.
+
+[Portfolio page](https://mrza.ch/) includes the public RoboOps case-study
+summary. The local recording path uses the simulator by default; the Isaac/Brev
+path is separate evidence for ROS2 and NVIDIA Isaac Sim integration.
+
+**Command dispatch flow**
+
+The command animation shows the operator creating a mission, Fleet Platform
+translating it into an edge command, and the robot-near runtime acknowledging
+the work back to the cloud.
+
+<img src="docs/assets/roboops-command.gif" alt="Animated RoboOps command dispatch flow" width="800">
+
+**Telemetry freshness and reconnect flow**
+
+The heartbeat animation shows the other side of the incident: telemetry updates
+stop, Fleet Platform marks the robot degraded, and the reconnect handshake
+reconciles cloud and edge state.
+
+<img src="docs/assets/roboops-heartbeat.gif" alt="Animated RoboOps telemetry heartbeat flow" width="800">
+
+**Operator UI with Isaac simulation evidence**
+
+The Operator UI preview shows the browser console used for mission state, robot
+health, map movement, demo fault controls, and the event timeline while the
+Isaac/Brev path provides robotics simulation evidence.
+
+![Operator UI connected to the Isaac simulation path](docs/assets/operatorui-and-isaac.png)
+
+The core incident flow is:
 
 ```text
 operator creates mission
@@ -18,6 +54,21 @@ operator creates mission
 -> reconnect handshake reconciles cloud and edge state
 -> Operator UI shows the event and audit timeline
 ```
+
+## What This Demonstrates
+
+- Cloud-to-edge robot operations with a cloud API, operator console, and
+  robot-near runtime boundary.
+- Mission dispatch from the Operator UI through Fleet Platform to the edge.
+- Command acknowledgement and audit history for the work sent to the robot.
+- Telemetry freshness tracking so stale robot updates become visible operator
+  risk.
+- Robot state degradation while a mission remains active and telemetry is no
+  longer fresh.
+- Reconnect reconciliation after cloud and edge state diverge during an
+  interruption.
+- Operator visibility through robot health, mission state, map movement, event
+  history, audit events, and metrics.
 
 ## What Exists Now
 
