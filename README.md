@@ -17,7 +17,7 @@ cloud-edge simulator run on one machine. It does not require real robot hardware
 
 [Portfolio page](https://mrza.ch/) includes the public RoboOps case-study
 summary. The local recording path uses the simulator by default; the Isaac/Brev
-path is separate evidence for ROS2 and NVIDIA Isaac Sim integration.
+path is a separate demo path for ROS2 and NVIDIA Isaac Sim integration.
 
 **Command dispatch flow**
 
@@ -31,18 +31,18 @@ the work back to the cloud.
 
 <img src="docs/assets/roboops-recovery.gif" alt="Animated RoboOps stale telemetry recovery flow" width="800">
 
-The recovery animation shows the incident path: telemetry stops before it
-reaches Fleet Platform, missed heartbeats become stale telemetry, the Operator
-UI receives a degraded robot state over live updates, and reconnect
+The recovery animation shows the failure-and-recovery path: telemetry stops
+before it reaches Fleet Platform, missed heartbeats become stale telemetry, the
+Operator UI receives a degraded robot state over live updates, and reconnect
 reconciliation restores cloud and edge state before telemetry resumes.
 
 **Operator console during stale telemetry**
 
 ![Operator console showing stale telemetry and degraded robot state](docs/assets/operator-console-stale.png)
 
-The stale-state preview shows the operator-facing result of the incident:
+The stale-state preview shows what the operator sees during the incident:
 the robot is degraded, telemetry is no longer fresh, and the event timeline
-keeps the failure visible instead of hiding it behind the simulator.
+keeps the failure visible instead of leaving it as a backend-only signal.
 
 **Telemetry and heartbeat flow**
 
@@ -51,13 +51,13 @@ keeps the failure visible instead of hiding it behind the simulator.
 The heartbeat animation shows the normal telemetry path from the robot-near
 runtime back to Fleet Platform and onward to the Operator UI.
 
-**Operator UI with Isaac simulation evidence**
+**Operator UI with Isaac simulation**
 
 ![Operator UI connected to the Isaac simulation path](docs/assets/operatorui-and-isaac.png)
 
 The Operator UI preview shows the browser console used for mission state, robot
 health, map movement, demo fault controls, and the event timeline while the
-Isaac/Brev path provides robotics simulation evidence.
+Isaac/Brev path shows the same control-plane flow against a robotics simulation.
 
 The core incident flow is:
 
@@ -173,7 +173,7 @@ Walkthrough:
 5. Click **Mark Stale** and wait for the robot to show degraded health.
 6. Click **Reconnect** and inspect reconciliation in the event timeline.
 7. Inspect `/events`, `/audit-events`, and `/metrics` when you want API-level
-   evidence.
+   details.
 
 The detailed script, curl alternatives, hosted recording notes, and simulator
 scenario variants live in [docs/demo-script.md](docs/demo-script.md).
