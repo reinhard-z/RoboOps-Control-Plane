@@ -30,7 +30,7 @@
   "dependencies": {
     "@roboops/fleet-domain": "workspace:*",
     "@roboops/fleet-protocol": "workspace:*",
-    "pg": "^8.20.0"
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@types/pg": "^8.20.0"
