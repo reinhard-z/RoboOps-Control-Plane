@@ -1,10 +1,10 @@
 import { Buffer } from "node:buffer";
-import { createHash } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 
 import type { CommandEnvelopeV1, RobotId } from "@roboops/fleet-protocol";
 import { classifyErrorType } from "@roboops/observability";
+import WebSocket, { type RawData, WebSocketServer } from "ws";
 
 import { createPlatformId, nowIso } from "./ids.js";
 import type { StructuredLogger } from "./logging.js";
@@ -13,86 +13,52 @@ import type { FleetPlatformService } from "./service.js";
 import type { EdgeWireMessage, PlatformWireMessage, RequestContext } from "./types.js";
 import { parseEdgeWireMessage } from "./validation.js";
 
-const webSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const maxFrameBytes = 1024 * 1024;
+const maxMessageBytes = 1024 * 1024;
+const shutdownCloseCode = 1001;
 
-/** Minimal WebSocket peer that supports JSON text frames for the edge gateway. */
+/** Small wrapper around one edge WebSocket so gateway logic does not depend on ws events. */
 class WebSocketPeer {
-  private buffer = Buffer.alloc(0);
-  private closed = false;
   private notifiedClosed = false;
 
   constructor(
-    private readonly socket: Socket,
+    private readonly socket: WebSocket,
     private readonly onTextMessage: (message: string) => void,
     private readonly onClosed: () => void
   ) {
-    this.socket.on("data", (chunk) => this.receiveData(chunk));
+    this.socket.on("message", (data, isBinary) => this.receiveMessage(data, isBinary));
     this.socket.on("close", () => this.markClosed());
     this.socket.on("error", () => this.markClosed());
   }
 
+  /** Sends one JSON platform message when the socket is still open. */
   sendJson(message: PlatformWireMessage): void {
-    this.sendText(JSON.stringify(message));
-  }
-
-  sendText(message: string): void {
-    if (this.closed) {
+    if (this.socket.readyState !== WebSocket.OPEN) {
       return;
     }
-    this.socket.write(encodeServerTextFrame(message));
+    this.socket.send(JSON.stringify(message));
   }
 
+  /** Closes the underlying socket and immediately runs gateway cleanup once. */
   close(): void {
-    if (this.closed) {
-      return;
+    if (
+      this.socket.readyState !== WebSocket.CLOSED &&
+      this.socket.readyState !== WebSocket.CLOSING
+    ) {
+      this.socket.close(shutdownCloseCode, "fleet platform shutdown");
     }
-    this.closed = true;
-    this.socket.end(Buffer.from([0x88, 0x00]));
     this.notifyClosed();
   }
 
-  receiveInitialBytes(head: Buffer): void {
-    if (head.length > 0) {
-      this.receiveData(head);
-    }
-  }
-
-  /** Parses all complete frames currently buffered from the TCP socket. */
-  private receiveData(chunk: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-    while (this.buffer.length > 0) {
-      const parsed = tryParseClientFrame(this.buffer);
-      if (parsed.status === "incomplete") {
-        return;
-      }
-      if (parsed.status === "invalid") {
-        this.close();
-        return;
-      }
-
-      this.buffer = this.buffer.subarray(parsed.frameBytes);
-      if (parsed.opcode === 0x8) {
-        this.close();
-        return;
-      }
-      if (parsed.opcode === 0x9) {
-        this.socket.write(encodeControlFrame(0xA, parsed.payload));
-        continue;
-      }
-      if (parsed.opcode === 0x1) {
-        this.onTextMessage(parsed.payload.toString("utf8"));
-      }
+  /** Converts text WebSocket payloads into strings before protocol validation. */
+  private receiveMessage(data: RawData, isBinary: boolean): void {
+    const message = textMessageFromRawData(data, isBinary);
+    if (message !== undefined) {
+      this.onTextMessage(message);
     }
   }
 
   /** Ensures the close callback runs only once regardless of socket event order. */
   private markClosed(): void {
-    if (this.closed) {
-      this.notifyClosed();
-      return;
-    }
-    this.closed = true;
     this.notifyClosed();
   }
 
@@ -110,6 +76,10 @@ class WebSocketPeer {
 export class EdgeWebSocketGateway {
   private readonly connectionsByRobot = new Map<RobotId, Set<WebSocketPeer>>();
   private readonly processingByRobot = new Map<RobotId, Promise<void>>();
+  private readonly websocketServer = new WebSocketServer({
+    maxPayload: maxMessageBytes,
+    noServer: true
+  });
   private closing = false;
 
   constructor(
@@ -118,6 +88,7 @@ export class EdgeWebSocketGateway {
     private readonly metrics: FleetPlatformMetrics
   ) {}
 
+  /** Accepts only the edge WebSocket route and lets ws perform the protocol upgrade. */
   handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer): boolean {
     const url = parseRequestUrl(request);
     if (!url || url.pathname !== "/edge/connect") {
@@ -136,10 +107,25 @@ export class EdgeWebSocketGateway {
       return true;
     }
 
-    socket.write(createUpgradeResponse(key));
+    try {
+      this.websocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+        this.acceptPeer(robotId, webSocket);
+      });
+    } catch (error: unknown) {
+      this.logger.warn("edge websocket upgrade failed", {
+        robotId,
+        errorType: classifyErrorType(error)
+      });
+      socket.destroy();
+    }
+    return true;
+  }
+
+  /** Registers an upgraded edge socket after ws has completed the handshake. */
+  private acceptPeer(robotId: RobotId, webSocket: WebSocket): void {
     let peer: WebSocketPeer;
     peer = new WebSocketPeer(
-      socket,
+      webSocket,
       (message) => {
         this.enqueueRobotTask(robotId, peer, () =>
           this.handlePeerMessage(robotId, peer, message)
@@ -148,13 +134,12 @@ export class EdgeWebSocketGateway {
       () => this.removePeer(robotId, peer)
     );
     this.addPeer(robotId, peer);
-    peer.receiveInitialBytes(head);
 
     this.logger.info("edge websocket connected", { robotId });
     this.metrics.recordEdgeConnection("opened");
-    return true;
   }
 
+  /** Sends one queued platform command to every open socket for the command robot. */
   sendCommand(command: CommandEnvelopeV1): number {
     return this.sendPlatformMessage(command.robotId, {
       type: "platform.command",
@@ -162,6 +147,7 @@ export class EdgeWebSocketGateway {
     });
   }
 
+  /** Sends a typed platform message to all currently connected peers for one robot. */
   sendPlatformMessage(robotId: RobotId, message: PlatformWireMessage): number {
     if (this.closing) {
       return 0;
@@ -188,6 +174,7 @@ export class EdgeWebSocketGateway {
     return peers.size;
   }
 
+  /** Stops accepting upgrades, closes all peers, and waits for in-flight handlers. */
   async closeAll(): Promise<void> {
     this.closing = true;
     const pendingTasks = [...this.processingByRobot.values()];
@@ -198,6 +185,7 @@ export class EdgeWebSocketGateway {
       peer.close();
     }
     this.connectionsByRobot.clear();
+    this.websocketServer.close();
     await Promise.allSettled(pendingTasks);
     this.processingByRobot.clear();
   }
@@ -327,109 +315,18 @@ export class EdgeWebSocketGateway {
   }
 }
 
-/** Creates the HTTP 101 response for a WebSocket upgrade. */
-function createUpgradeResponse(key: string): string {
-  const accept = createHash("sha1")
-    .update(`${key}${webSocketGuid}`)
-    .digest("base64");
-  return [
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    `Sec-WebSocket-Accept: ${accept}`,
-    "\r\n"
-  ].join("\r\n");
-}
-
-/** Encodes a server-to-client text frame; server frames are intentionally unmasked. */
-function encodeServerTextFrame(message: string): Buffer {
-  return encodeControlFrame(0x1, Buffer.from(message, "utf8"));
-}
-
-/** Encodes a single unmasked server frame for text, pong, or close responses. */
-function encodeControlFrame(opcode: number, payload: Buffer): Buffer {
-  if (payload.length < 126) {
-    return Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]);
+/** Decodes non-binary ws payloads into the JSON text expected from edge runtimes. */
+function textMessageFromRawData(data: RawData, isBinary: boolean): string | undefined {
+  if (isBinary) {
+    return undefined;
   }
-
-  if (payload.length <= 65_535) {
-    const header = Buffer.alloc(4);
-    header[0] = 0x80 | opcode;
-    header[1] = 126;
-    header.writeUInt16BE(payload.length, 2);
-    return Buffer.concat([header, payload]);
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
   }
-
-  const header = Buffer.alloc(10);
-  header[0] = 0x80 | opcode;
-  header[1] = 127;
-  header.writeBigUInt64BE(BigInt(payload.length), 2);
-  return Buffer.concat([header, payload]);
-}
-
-type ParsedFrame =
-  | { readonly status: "incomplete" }
-  | { readonly status: "invalid" }
-  | {
-      readonly status: "complete";
-      readonly opcode: number;
-      readonly payload: Buffer;
-      readonly frameBytes: number;
-    };
-
-/** Parses one complete masked client frame when enough bytes are available. */
-function tryParseClientFrame(buffer: Buffer): ParsedFrame {
-  if (buffer.length < 2) {
-    return { status: "incomplete" };
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
   }
-
-  const firstByte = buffer[0]!;
-  const secondByte = buffer[1]!;
-  const opcode = firstByte & 0x0f;
-  const masked = (secondByte & 0x80) === 0x80;
-  let payloadLength = secondByte & 0x7f;
-  let offset = 2;
-
-  if (!masked) {
-    return { status: "invalid" };
-  }
-
-  if (payloadLength === 126) {
-    if (buffer.length < offset + 2) {
-      return { status: "incomplete" };
-    }
-    payloadLength = buffer.readUInt16BE(offset);
-    offset += 2;
-  } else if (payloadLength === 127) {
-    if (buffer.length < offset + 8) {
-      return { status: "incomplete" };
-    }
-    const bigLength = buffer.readBigUInt64BE(offset);
-    if (bigLength > BigInt(Number.MAX_SAFE_INTEGER)) {
-      return { status: "invalid" };
-    }
-    payloadLength = Number(bigLength);
-    offset += 8;
-  }
-
-  if (payloadLength > maxFrameBytes) {
-    return { status: "invalid" };
-  }
-
-  const maskOffset = offset;
-  const payloadOffset = maskOffset + 4;
-  const frameBytes = payloadOffset + payloadLength;
-  if (buffer.length < frameBytes) {
-    return { status: "incomplete" };
-  }
-
-  const mask = buffer.subarray(maskOffset, payloadOffset);
-  const payload = Buffer.from(buffer.subarray(payloadOffset, frameBytes));
-  for (let index = 0; index < payload.length; index += 1) {
-    payload[index] = payload[index]! ^ mask[index % 4]!;
-  }
-
-  return { status: "complete", opcode, payload, frameBytes };
+  return Buffer.from(data).toString("utf8");
 }
 
 /** Parses the incoming request URL without trusting the Host header for routing. */
