@@ -115,13 +115,13 @@ Fleet Platform port through a temporary outbound tunnel such as ngrok:
 ngrok http 4010
 ```
 
-Use the printed `https://...ngrok-free...` base URL without `/health/live` or a
-port suffix. Validate the tunnel from the Brev sidecar before starting the
+Use the printed `https://...ngrok-free...` base URL without `/v1/health/live` or
+a port suffix. Validate the tunnel from the Brev sidecar before starting the
 sender:
 
 ```sh
 cd ~/isaac-launchable/isaac-lab
-docker compose --profile probe run --rm ros2-probe bash -lc 'curl -i -m 10 -H "ngrok-skip-browser-warning: true" https://<ngrok-host>/health/live'
+docker compose --profile probe run --rm ros2-probe bash -lc 'curl -i -m 10 -H "ngrok-skip-browser-warning: true" https://<ngrok-host>/v1/health/live'
 ```
 
 Then start the sender with the same base URL. The `/cmd_vel` command shim is
@@ -147,7 +147,7 @@ bash ~/RoboOps-Control-Plane/sim/isaac-sim/launchable/configure-ros2-probe-sidec
 
 ```sh
 cd ~/isaac-launchable/isaac-lab
-docker compose --profile probe run --rm ros2-probe bash -lc 'curl -fsS -m 10 https://<hosted-fleet-platform-host>/health/live'
+docker compose --profile probe run --rm ros2-probe bash -lc 'curl -fsS -m 10 https://<hosted-fleet-platform-host>/v1/health/live'
 ```
 
 ```sh

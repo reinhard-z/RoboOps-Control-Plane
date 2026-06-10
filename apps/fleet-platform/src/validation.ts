@@ -23,7 +23,7 @@ import type {
   ValidationResult
 } from "./types.js";
 
-/** Parses and validates the POST /missions body against protocol command rules. */
+/** Parses and validates the POST /v1/missions body against protocol command rules. */
 export function parseCreateMissionRequest(body: unknown): ValidationResult<CreateMissionRequest> {
   const issues: ValidationIssue[] = [];
   if (!isRecord(body)) {
@@ -68,7 +68,7 @@ export function parseCreateMissionRequest(body: unknown): ValidationResult<Creat
   });
 }
 
-/** Parses and validates the POST /missions/:missionId/cancel body. */
+/** Parses and validates the POST /v1/missions/:missionId/cancel body. */
 export function parseCancelMissionRequest(body: unknown): ValidationResult<CancelMissionRequest> {
   const issues: ValidationIssue[] = [];
   if (!isRecord(body)) {

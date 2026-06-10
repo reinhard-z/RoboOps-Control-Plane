@@ -120,38 +120,38 @@ export function routeLabelForRequest(
   if (!pathname) {
     return "UNKNOWN";
   }
-  if (pathname === "/health/live") {
-    return "/health/live";
+  if (pathname === "/v1/health/live") {
+    return "/v1/health/live";
   }
-  if (pathname === "/health/ready") {
-    return "/health/ready";
+  if (pathname === "/v1/health/ready") {
+    return "/v1/health/ready";
   }
-  if (pathname === "/metrics") {
-    return "/metrics";
+  if (pathname === "/v1/metrics") {
+    return "/v1/metrics";
   }
   if (pathname === "/stream/events") {
     return "/stream/events";
   }
-  if (pathname === "/missions") {
-    return "/missions";
+  if (pathname === "/v1/missions") {
+    return "/v1/missions";
   }
-  if (/^\/missions\/[^/]+$/.test(pathname)) {
-    return "/missions/:missionId";
+  if (/^\/v1\/missions\/[^/]+$/.test(pathname)) {
+    return "/v1/missions/:missionId";
   }
-  if (/^\/missions\/[^/]+\/cancel$/.test(pathname)) {
-    return "/missions/:missionId/cancel";
+  if (/^\/v1\/missions\/[^/]+\/cancel$/.test(pathname)) {
+    return "/v1/missions/:missionId/cancel";
   }
-  if (pathname === "/robots") {
-    return "/robots";
+  if (pathname === "/v1/robots") {
+    return "/v1/robots";
   }
-  if (/^\/robots\/[^/]+$/.test(pathname)) {
-    return "/robots/:robotId";
+  if (/^\/v1\/robots\/[^/]+$/.test(pathname)) {
+    return "/v1/robots/:robotId";
   }
-  if (pathname === "/events") {
-    return "/events";
+  if (pathname === "/v1/events") {
+    return "/v1/events";
   }
-  if (pathname === "/audit-events") {
-    return "/audit-events";
+  if (pathname === "/v1/audit-events") {
+    return "/v1/audit-events";
   }
   if (pathname === "/edge/connect") {
     return "/edge/connect";

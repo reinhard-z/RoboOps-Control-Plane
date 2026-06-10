@@ -220,8 +220,8 @@ For a live Fleet Platform running on the Brev host, use the app's health routes
 to verify it first:
 
 ```sh
-curl http://127.0.0.1:4010/health/live
-curl http://127.0.0.1:4010/health/ready
+curl http://127.0.0.1:4010/v1/health/live
+curl http://127.0.0.1:4010/v1/health/ready
 ```
 
 The app does not expose `/health`. Because the probe sidecar uses
@@ -236,7 +236,7 @@ and repeated `sent edge.telemetry eventId=...` lines. Confirm the platform
 snapshot separately:
 
 ```sh
-curl http://127.0.0.1:4010/robots/robot-a
+curl http://127.0.0.1:4010/v1/robots/robot-a
 ```
 
 Before live command testing, validate the command-to-motion plan without ROS2:

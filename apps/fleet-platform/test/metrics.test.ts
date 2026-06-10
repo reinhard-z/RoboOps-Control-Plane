@@ -13,6 +13,7 @@ import type { LogFields } from "../src/logging.js";
 describe("fleet platform observability", () => {
   let runtime: FleetPlatformRuntime;
   let baseUrl: string;
+  let apiBaseUrl: string;
   let logger: CapturingStructuredLogger;
 
   beforeEach(async () => {
@@ -32,6 +33,7 @@ describe("fleet platform observability", () => {
     await listenFleetPlatform(runtime);
     const address = runtime.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    apiBaseUrl = `${baseUrl}/v1`;
   });
 
   afterEach(async () => {
@@ -39,10 +41,10 @@ describe("fleet platform observability", () => {
   });
 
   it("serves Prometheus text metrics with HTTP request counters", async () => {
-    await fetch(`${baseUrl}/health/live`);
-    await fetch(`${baseUrl}/missions/m_live_metric_id`);
+    await fetch(`${apiBaseUrl}/health/live`);
+    await fetch(`${apiBaseUrl}/missions/m_live_metric_id`);
 
-    const response = await fetch(`${baseUrl}/metrics`);
+    const response = await fetch(`${apiBaseUrl}/metrics`);
     const text = await response.text();
 
     expect(response.status).toBe(200);
@@ -50,10 +52,10 @@ describe("fleet platform observability", () => {
       "text/plain; version=0.0.4"
     );
     expect(text).toContain(
-      'roboops_fleet_platform_http_requests_total{method="GET",route="/health/live",status_class="2xx"} 1'
+      'roboops_fleet_platform_http_requests_total{method="GET",route="/v1/health/live",status_class="2xx"} 1'
     );
     expect(text).toContain(
-      'roboops_fleet_platform_http_requests_total{method="GET",route="/missions/:missionId",status_class="4xx"} 1'
+      'roboops_fleet_platform_http_requests_total{method="GET",route="/v1/missions/:missionId",status_class="4xx"} 1'
     );
     expect(text).not.toContain("m_live_metric_id");
   });
@@ -67,12 +69,12 @@ describe("fleet platform observability", () => {
       throw error;
     };
 
-    const readiness = await fetch(`${baseUrl}/health/ready`, {
+    const readiness = await fetch(`${apiBaseUrl}/health/ready`, {
       headers: { "X-Correlation-Id": "corr-readiness-metric" }
     });
     expect(readiness.status).toBe(503);
 
-    const metrics = await (await fetch(`${baseUrl}/metrics`)).text();
+    const metrics = await (await fetch(`${apiBaseUrl}/metrics`)).text();
     expect(metrics).toContain(
       'roboops_fleet_platform_readiness_failures_total{persistence_mode="in-memory",check="repository.read",error_type="DriverConnectionError"} 1'
     );
@@ -83,7 +85,7 @@ describe("fleet platform observability", () => {
 
   it("emits safe structured incident logs for command decisions", async () => {
     const accepted = await postJson(
-      `${baseUrl}/missions`,
+      `${apiBaseUrl}/missions`,
       {
         robotId: "robot-a",
         type: "GO_TO_POSE",
@@ -96,7 +98,7 @@ describe("fleet platform observability", () => {
     expect(accepted.status).toBe(202);
 
     const rejected = await postJson(
-      `${baseUrl}/missions`,
+      `${apiBaseUrl}/missions`,
       {
         robotId: "robot-a",
         type: "GO_TO_POSE",

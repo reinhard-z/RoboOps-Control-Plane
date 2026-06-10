@@ -25,7 +25,7 @@ describe("operator UI API client", () => {
       theta: 1.57
     });
 
-    expect(requestUrl).toBe("http://fleet.test/missions");
+    expect(requestUrl).toBe("http://fleet.test/v1/missions");
     expect(requestBody).toMatchObject({
       robotId: "robot-a",
       type: "GO_TO_POSE",
@@ -55,7 +55,7 @@ describe("operator UI API client", () => {
       "operator requested cancel from UI"
     );
 
-    expect(requestUrl).toBe("http://fleet.test/missions/mission-old/cancel");
+    expect(requestUrl).toBe("http://fleet.test/v1/missions/mission-old/cancel");
     expect(requestBody).toEqual({
       reason: "operator requested cancel from UI"
     });

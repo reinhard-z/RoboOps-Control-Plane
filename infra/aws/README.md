@@ -18,7 +18,8 @@ simulator, Postgres, EKS, App Runner, or ArgoCD.
 - one HTTPS ALB with host-based routing;
 - one Fleet Platform Fargate service on port `4010`;
 - one Operator UI Fargate service on port `4020`;
-- target-group health checks for `/health/ready` and `/health/live`;
+- target-group health checks for Fleet Platform `/v1/health/ready` and
+  Operator UI `/health/live`;
 - exact CORS wiring from Fleet Platform to the Operator UI origin;
 - exact Operator UI API wiring to the Fleet Platform URL;
 - CloudWatch log groups and minimal task roles.

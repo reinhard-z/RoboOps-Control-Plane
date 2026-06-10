@@ -172,8 +172,8 @@ Walkthrough:
 4. Watch dispatch, edge acknowledgement, telemetry, and map movement.
 5. Click **Mark Stale** and wait for the robot to show degraded health.
 6. Click **Reconnect** and inspect reconciliation in the event timeline.
-7. Inspect `/events`, `/audit-events`, and `/metrics` when you want API-level
-   details.
+7. Inspect `/v1/events`, `/v1/audit-events`, and `/v1/metrics` when you want
+   API-level details.
 
 The detailed script, curl alternatives, hosted recording notes, and simulator
 scenario variants live in [docs/demo-script.md](docs/demo-script.md).

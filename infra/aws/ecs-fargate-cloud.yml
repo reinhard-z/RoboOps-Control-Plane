@@ -220,7 +220,7 @@ Resources:
       Port: 4010
       HealthCheckEnabled: true
       HealthCheckProtocol: HTTP
-      HealthCheckPath: /health/ready
+      HealthCheckPath: /v1/health/ready
       HealthCheckIntervalSeconds: 15
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 2
@@ -335,7 +335,7 @@ Resources:
           HealthCheck:
             Command:
               - CMD-SHELL
-              - node -e "fetch('http://127.0.0.1:4010/health/live').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+              - node -e "fetch('http://127.0.0.1:4010/v1/health/live').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
             Interval: 30
             Timeout: 5
             Retries: 3
