@@ -31,6 +31,7 @@ interface TestWebSocket {
 describe("fleet platform API and edge gateway", () => {
   let runtime: FleetPlatformRuntime;
   let baseUrl: string;
+  let apiBaseUrl: string;
   let edgeUrl: string;
 
   beforeEach(async () => {
@@ -49,6 +50,7 @@ describe("fleet platform API and edge gateway", () => {
     await listenFleetPlatform(runtime);
     const address = runtime.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    apiBaseUrl = `${baseUrl}/v1`;
     edgeUrl = `ws://127.0.0.1:${address.port}/edge/connect?robotId=robot-a`;
   });
 
@@ -56,12 +58,30 @@ describe("fleet platform API and edge gateway", () => {
     await closeRuntime(runtime);
   });
 
+  it("does not serve unversioned REST routes", async () => {
+    const responses = await Promise.all([
+      fetch(`${baseUrl}/health/live`),
+      fetch(`${baseUrl}/missions`),
+      fetch(`${baseUrl}/robots/robot-a`),
+      fetch(`${baseUrl}/metrics`)
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([
+      404,
+      404,
+      404,
+      404
+    ]);
+
+    const edgeHttpResponse = await fetch(`${baseUrl}/edge/connect`);
+    expect(edgeHttpResponse.status).toBe(426);
+  });
+
   it("creates a mission over HTTP, delivers the command over WebSocket, and applies an edge ack", async () => {
     const edge = await openWebSocket(edgeUrl);
     const commandMessagePromise = nextWebSocketMessageOfType(edge, "platform.command");
 
     const createResponse = await postJson(
-      `${baseUrl}/missions`,
+      `${apiBaseUrl}/missions`,
       {
         robotId: "robot-a",
         type: "GO_TO_POSE",
@@ -99,7 +119,7 @@ describe("fleet platform API and edge gateway", () => {
     );
 
     await eventually(async () => {
-      const missionResponse = await fetch(`${baseUrl}/missions/${command.missionId}`);
+      const missionResponse = await fetch(`${apiBaseUrl}/missions/${command.missionId}`);
       const missionBody = (await missionResponse.json()) as {
         readonly mission: { readonly lifecycleState: string };
       };
@@ -107,7 +127,7 @@ describe("fleet platform API and edge gateway", () => {
     });
 
     const auditResponse = await fetch(
-      `${baseUrl}/audit-events?missionId=${command.missionId}`
+      `${apiBaseUrl}/audit-events?missionId=${command.missionId}`
     );
     const auditBody = (await auditResponse.json()) as {
       readonly auditEvents: readonly { readonly action: string }[];
@@ -118,7 +138,7 @@ describe("fleet platform API and edge gateway", () => {
 
     const cancelMessagePromise = nextWebSocketMessageOfType(edge, "platform.command");
     const cancelResponse = await postJson(
-      `${baseUrl}/missions/${command.missionId}/cancel`,
+      `${apiBaseUrl}/missions/${command.missionId}/cancel`,
       { reason: "operator test cancel" }
     );
     expect(cancelResponse.status).toBe(202);
@@ -129,7 +149,7 @@ describe("fleet platform API and edge gateway", () => {
     expect(cancelCommand.missionId).toBe(command.missionId);
 
     const cancelRequestedResponse = await fetch(
-      `${baseUrl}/missions/${command.missionId}`
+      `${apiBaseUrl}/missions/${command.missionId}`
     );
     const cancelRequestedBody = (await cancelRequestedResponse.json()) as {
       readonly mission: { readonly lifecycleState: string };
@@ -155,7 +175,7 @@ describe("fleet platform API and edge gateway", () => {
     );
 
     await eventually(async () => {
-      const missionResponse = await fetch(`${baseUrl}/missions/${command.missionId}`);
+      const missionResponse = await fetch(`${apiBaseUrl}/missions/${command.missionId}`);
       const missionBody = (await missionResponse.json()) as {
         readonly mission: { readonly lifecycleState: string };
       };
@@ -163,7 +183,7 @@ describe("fleet platform API and edge gateway", () => {
     });
 
     const cancelAuditResponse = await fetch(
-      `${baseUrl}/audit-events?missionId=${command.missionId}`
+      `${apiBaseUrl}/audit-events?missionId=${command.missionId}`
     );
     const cancelAuditBody = (await cancelAuditResponse.json()) as {
       readonly auditEvents: readonly {
@@ -195,13 +215,13 @@ describe("fleet platform API and edge gateway", () => {
       "Idempotency-Key": "operator:test:http-idempotency:replay"
     };
 
-    const first = await postJson(`${baseUrl}/missions`, body, headers);
-    const replay = await postJson(`${baseUrl}/missions`, body, headers);
+    const first = await postJson(`${apiBaseUrl}/missions`, body, headers);
+    const replay = await postJson(`${apiBaseUrl}/missions`, body, headers);
 
     expect(first.status).toBe(202);
     expect(replay.status).toBe(202);
     expect(replay.body).toEqual(first.body);
-    expect(await listMissions(baseUrl)).toHaveLength(1);
+    expect(await listMissions(apiBaseUrl)).toHaveLength(1);
   });
 
   it("rejects Idempotency-Key reuse with a different request body", async () => {
@@ -210,7 +230,7 @@ describe("fleet platform API and edge gateway", () => {
     };
 
     const first = await postJson(
-      `${baseUrl}/missions`,
+      `${apiBaseUrl}/missions`,
       {
         robotId: "robot-a",
         type: "GO_TO_POSE",
@@ -219,7 +239,7 @@ describe("fleet platform API and edge gateway", () => {
       headers
     );
     const conflict = await postJson(
-      `${baseUrl}/missions`,
+      `${apiBaseUrl}/missions`,
       {
         robotId: "robot-a",
         type: "GO_TO_POSE",
@@ -236,11 +256,11 @@ describe("fleet platform API and edge gateway", () => {
         message: "idempotency key was already used with a different request body"
       }
     });
-    expect(await listMissions(baseUrl)).toHaveLength(1);
+    expect(await listMissions(apiBaseUrl)).toHaveLength(1);
   });
 
   it("requires Idempotency-Key for mission creation", async () => {
-    const response = await postJson(`${baseUrl}/missions`, {
+    const response = await postJson(`${apiBaseUrl}/missions`, {
       robotId: "robot-a",
       type: "GO_TO_POSE",
       payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
@@ -258,12 +278,12 @@ describe("fleet platform API and edge gateway", () => {
         ]
       }
     });
-    expect(await listMissions(baseUrl)).toHaveLength(0);
+    expect(await listMissions(apiBaseUrl)).toHaveLength(0);
   });
 
   it("delivers a queued command only once when the edge sends hello after connecting", async () => {
     const createResponse = await postJson(
-      `${baseUrl}/missions`,
+      `${apiBaseUrl}/missions`,
       {
         robotId: "robot-a",
         type: "GO_TO_POSE",
@@ -322,7 +342,7 @@ describe("fleet platform API and edge gateway", () => {
     );
 
     await eventually(async () => {
-      const robotResponse = await fetch(`${baseUrl}/robots/robot-a`);
+      const robotResponse = await fetch(`${apiBaseUrl}/robots/robot-a`);
       const robotBody = (await robotResponse.json()) as {
         readonly robot: {
           readonly connectionState: string;
@@ -357,7 +377,7 @@ describe("fleet platform API and edge gateway", () => {
     const reader = streamResponse.body.getReader();
     const eventPromise = readStreamUntil(reader, "mission.command.dispatched");
     const createResponse = await postJson(
-      `${baseUrl}/missions`,
+      `${apiBaseUrl}/missions`,
       {
         robotId: "robot-a",
         type: "GO_TO_POSE",
@@ -404,6 +424,7 @@ describe("fleet platform API and edge gateway", () => {
     await listenFleetPlatform(runtime);
     const address = runtime.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    apiBaseUrl = `${baseUrl}/v1`;
     edgeUrl = `ws://127.0.0.1:${address.port}/edge/connect?robotId=robot-a`;
 
     const missingToken = await postJson(`${baseUrl}/demo/scenarios/reset`, {});
@@ -423,7 +444,7 @@ describe("fleet platform API and edge gateway", () => {
     );
     expect(incident.status).toBe(202);
 
-    const missionsBeforeReset = await fetch(`${baseUrl}/missions`);
+    const missionsBeforeReset = await fetch(`${apiBaseUrl}/missions`);
     const missionsBeforeResetBody = (await missionsBeforeReset.json()) as {
       readonly missions: readonly unknown[];
     };
@@ -436,7 +457,7 @@ describe("fleet platform API and edge gateway", () => {
     );
     expect(repeatedIncident.status).toBe(202);
 
-    const missionsAfterRepeatedStart = await fetch(`${baseUrl}/missions`);
+    const missionsAfterRepeatedStart = await fetch(`${apiBaseUrl}/missions`);
     const missionsAfterRepeatedStartBody = (await missionsAfterRepeatedStart.json()) as {
       readonly missions: readonly unknown[];
     };
@@ -449,13 +470,13 @@ describe("fleet platform API and edge gateway", () => {
     );
     expect(reset.status).toBe(200);
 
-    const missionsAfterReset = await fetch(`${baseUrl}/missions`);
+    const missionsAfterReset = await fetch(`${apiBaseUrl}/missions`);
     const missionsAfterResetBody = (await missionsAfterReset.json()) as {
       readonly missions: readonly unknown[];
     };
     expect(missionsAfterResetBody.missions).toEqual([]);
 
-    const robotResponse = await fetch(`${baseUrl}/robots/robot-a`);
+    const robotResponse = await fetch(`${apiBaseUrl}/robots/robot-a`);
     const robotBody = (await robotResponse.json()) as {
       readonly robot: {
         readonly connectionState: string;
@@ -485,6 +506,7 @@ describe("fleet platform API and edge gateway", () => {
     await listenFleetPlatform(runtime);
     const address = runtime.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    apiBaseUrl = `${baseUrl}/v1`;
 
     const headers = { "X-Demo-Admin-Token": "local-demo-token" };
     const start = await postJson(
@@ -516,7 +538,7 @@ describe("fleet platform API and edge gateway", () => {
       }
     });
 
-    const robotAfterReconnect = await fetch(`${baseUrl}/robots/robot-a`);
+    const robotAfterReconnect = await fetch(`${apiBaseUrl}/robots/robot-a`);
     const robotAfterReconnectBody = (await robotAfterReconnect.json()) as {
       readonly robot: { readonly connectionState: string };
     };
@@ -535,7 +557,7 @@ describe("fleet platform API and edge gateway", () => {
       result: { status: "NO_ACTIVE_MISSION" }
     });
 
-    const robotAfterNoopReconnect = await fetch(`${baseUrl}/robots/robot-a`);
+    const robotAfterNoopReconnect = await fetch(`${apiBaseUrl}/robots/robot-a`);
     const robotAfterNoopReconnectBody = (await robotAfterNoopReconnect.json()) as {
       readonly robot: { readonly connectionState: string };
     };
@@ -562,10 +584,11 @@ describe("fleet platform API and edge gateway", () => {
     await listenFleetPlatform(runtime);
     const address = runtime.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    apiBaseUrl = `${baseUrl}/v1`;
     edgeUrl = `ws://127.0.0.1:${address.port}/edge/connect?robotId=robot-a`;
 
     await eventually(async () => {
-      const robotResponse = await fetch(`${baseUrl}/robots/robot-a`);
+      const robotResponse = await fetch(`${apiBaseUrl}/robots/robot-a`);
       const robotBody = (await robotResponse.json()) as {
         readonly robot: { readonly connectionState: string };
       };
@@ -666,8 +689,8 @@ async function postJson(
 }
 
 /** Reads the mission collection through the public API. */
-async function listMissions(baseUrl: string): Promise<readonly unknown[]> {
-  const response = await fetch(`${baseUrl}/missions`);
+async function listMissions(apiBaseUrl: string): Promise<readonly unknown[]> {
+  const response = await fetch(`${apiBaseUrl}/missions`);
   const body = (await response.json()) as {
     readonly missions: readonly unknown[];
   };

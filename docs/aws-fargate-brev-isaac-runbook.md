@@ -19,7 +19,7 @@ pair behind one HTTPS ALB:
 
 - ALB supports native WebSocket upgrades for `/edge/connect`.
 - ALB target groups still use HTTP health checks, so Fleet Platform health is
-  checked through `/health/ready` rather than through the WebSocket endpoint.
+  checked through `/v1/health/ready` rather than through the WebSocket endpoint.
 - ECS/Fargate can run the existing Node images without Kubernetes.
 - The stack can hard-pin Fleet Platform to one running task because edge
   connections and in-memory state are process-local.
@@ -307,11 +307,11 @@ export OPERATOR_UI_ORIGIN=https://$OPERATOR_UI_HOST
 Verify Fleet Platform:
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/health/live"
+curl -fsS "$FLEET_PLATFORM_URL/v1/health/live"
 ```
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/health/ready"
+curl -fsS "$FLEET_PLATFORM_URL/v1/health/ready"
 ```
 
 Verify Operator UI:
@@ -384,7 +384,7 @@ cd ~/isaac-launchable/isaac-lab
 Validate hosted Fleet Platform from inside the ROS2 sidecar:
 
 ```sh
-docker compose --profile probe run --rm ros2-probe bash -lc 'curl -fsS -m 10 https://fleet-roboops.example.com/health/live'
+docker compose --profile probe run --rm ros2-probe bash -lc 'curl -fsS -m 10 https://fleet-roboops.example.com/v1/health/live'
 ```
 
 Start the live sender. Replace the URL with your actual Fleet Platform host:
@@ -428,15 +428,15 @@ The browser should show:
 For API evidence while the UI is open:
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/robots/$ROBOT_ID"
+curl -fsS "$FLEET_PLATFORM_URL/v1/robots/$ROBOT_ID"
 ```
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/missions"
+curl -fsS "$FLEET_PLATFORM_URL/v1/missions"
 ```
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/events"
+curl -fsS "$FLEET_PLATFORM_URL/v1/events"
 ```
 
 For live event evidence:
@@ -461,7 +461,7 @@ aws logs tail "/ecs/$STACK_NAME/fleet-platform" \
 If Operator UI loads but browser calls fail, verify:
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/health/ready"
+curl -fsS "$FLEET_PLATFORM_URL/v1/health/ready"
 ```
 
 Then confirm Fleet Platform was deployed with:
@@ -477,7 +477,7 @@ and that the sender uses the base URL only:
 FLEET_PLATFORM_URL=https://$FLEET_PLATFORM_HOST
 ```
 
-Do not append `/edge/connect`, `/health/live`, or a port.
+Do not append `/edge/connect`, `/v1/health/live`, or a port.
 
 If the edge connects but commands are not acknowledged, keep the sender terminal
 visible and create another mission from the hosted UI. The sender must log the

@@ -13,6 +13,7 @@ import type { LogFields } from "../src/logging.js";
 describe("fleet platform health readiness", () => {
   let runtime: FleetPlatformRuntime;
   let baseUrl: string;
+  let apiBaseUrl: string;
   let logger: CapturingStructuredLogger;
 
   beforeEach(async () => {
@@ -32,6 +33,7 @@ describe("fleet platform health readiness", () => {
     await listenFleetPlatform(runtime);
     const address = runtime.server.address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
+    apiBaseUrl = `${baseUrl}/v1`;
   });
 
   afterEach(async () => {
@@ -39,7 +41,7 @@ describe("fleet platform health readiness", () => {
   });
 
   it("reports the default in-memory repository as ready", async () => {
-    const response = await fetch(`${baseUrl}/health/ready`);
+    const response = await fetch(`${apiBaseUrl}/health/ready`);
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -59,7 +61,7 @@ describe("fleet platform health readiness", () => {
       );
     };
 
-    const response = await fetch(`${baseUrl}/health/ready`, {
+    const response = await fetch(`${apiBaseUrl}/health/ready`, {
       headers: { "X-Correlation-Id": "corr-readiness-failure" }
     });
     const body = await response.json();
@@ -98,7 +100,7 @@ describe("fleet platform health readiness", () => {
     runtime.repository.read = () => new Promise(() => undefined);
 
     const startedAt = Date.now();
-    const response = await fetch(`${baseUrl}/health/ready`, {
+    const response = await fetch(`${apiBaseUrl}/health/ready`, {
       headers: { "X-Correlation-Id": "corr-readiness-timeout" }
     });
     const elapsedMs = Date.now() - startedAt;

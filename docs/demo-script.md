@@ -87,11 +87,11 @@ Open `http://127.0.0.1:4020`.
 The same flow can be inspected through the Fleet Platform API.
 
 ```sh
-curl -s http://127.0.0.1:4010/robots/robot-a
-curl -s http://127.0.0.1:4010/missions
-curl -s http://127.0.0.1:4010/events
-curl -s http://127.0.0.1:4010/audit-events
-curl -s http://127.0.0.1:4010/metrics
+curl -s http://127.0.0.1:4010/v1/robots/robot-a
+curl -s http://127.0.0.1:4010/v1/missions
+curl -s http://127.0.0.1:4010/v1/events
+curl -s http://127.0.0.1:4010/v1/audit-events
+curl -s http://127.0.0.1:4010/v1/metrics
 ```
 
 The protected demo endpoints are available only when Fleet Platform runs with
@@ -114,22 +114,22 @@ curl -s -X POST http://127.0.0.1:4010/demo/faults/reconnect \
 A normal mission can still be created without demo endpoints:
 
 ```sh
-curl -s http://127.0.0.1:4010/missions \
+curl -s http://127.0.0.1:4010/v1/missions \
   -H 'content-type: application/json' \
   -H 'idempotency-key: demo-script-mission-001' \
   -d '{"robotId":"robot-a","type":"GO_TO_POSE","payload":{"target":{"x":2,"y":4.5,"theta":1.57}}}'
 ```
 
-`POST /missions` requires an `Idempotency-Key` header. Retrying with the same
+`POST /v1/missions` requires an `Idempotency-Key` header. Retrying with the same
 key and same JSON body returns the original response without creating a second
 mission; reusing the key with a different body returns `409 Conflict`.
 
 Use the returned mission id for focused reads:
 
 ```sh
-curl -s http://127.0.0.1:4010/missions/<missionId>
-curl -s "http://127.0.0.1:4010/events?missionId=<missionId>"
-curl -s "http://127.0.0.1:4010/audit-events?missionId=<missionId>"
+curl -s http://127.0.0.1:4010/v1/missions/<missionId>
+curl -s "http://127.0.0.1:4010/v1/events?missionId=<missionId>"
+curl -s "http://127.0.0.1:4010/v1/audit-events?missionId=<missionId>"
 ```
 
 ## Simulator Scenario Variants
@@ -147,7 +147,7 @@ SIM_SCENARIO=stale-telemetry \
 pnpm --filter @roboops/cloud-edge-simulator dev
 ```
 
-Create a clean mission, wait about 11 seconds, then read `/robots/robot-a`.
+Create a clean mission, wait about 11 seconds, then read `/v1/robots/robot-a`.
 Fleet Platform should mark the robot degraded while the mission stays active.
 
 Reconnect:

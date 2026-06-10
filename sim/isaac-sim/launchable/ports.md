@@ -36,7 +36,7 @@ such as ngrok. Use the public `https://...` tunnel base URL as
 Check reachability from the ROS2 sidecar before running the sender:
 
 ```sh
-curl -i -m 10 -H "ngrok-skip-browser-warning: true" https://<ngrok-host>/health/live
+curl -i -m 10 -H "ngrok-skip-browser-warning: true" https://<ngrok-host>/v1/health/live
 ```
 
 Do not expose ROS2/DDS, Isaac internals, or the edge adapter as public inbound

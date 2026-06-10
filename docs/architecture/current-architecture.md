@@ -24,9 +24,9 @@ agent, but it is still a boundary skeleton rather than a real robot adapter.
 - Domain tests proving the incident path without API, DB, UI, or simulator.
 - `apps/fleet-platform`: HTTP API, SSE stream, edge WebSocket gateway, queued
   command delivery, cancel command flow, telemetry freshness sweep, and explicit
-  runtime persistence selection with in-memory as the default. `/health/live`
-  is a cheap process liveness check, `/health/ready` verifies that the
-  configured repository can read the current domain state, and `/metrics`
+  runtime persistence selection with in-memory as the default. `/v1/health/live`
+  is a cheap process liveness check, `/v1/health/ready` verifies that the
+  configured repository can read the current domain state, and `/v1/metrics`
   exposes local Prometheus text metrics from the process.
 - `apps/cloud-edge-simulator`: outbound WebSocket edge client that sends
   `edge.hello`, accepts `GO_TO_POSE` and `CANCEL_MISSION`, emits accepted acks,
@@ -245,7 +245,7 @@ pnpm --filter @roboops/fleet-platform check:postgres:local
 Fleet Platform does not run migrations during normal server startup. Apply the
 migrations before starting the platform in Postgres mode.
 
-In Postgres mode, `/health/ready` returns `503` with a sanitized structured
+In Postgres mode, `/v1/health/ready` returns `503` with a sanitized structured
 error if the database is unavailable or the migrations have not been applied.
 The manual readiness command uses the same repository read path and also keeps
 database URLs, credentials, and raw driver text out of user-facing output.
@@ -254,7 +254,7 @@ Inspect local in-process metrics without adding Prometheus, Grafana, or a
 collector:
 
 ```sh
-curl -s http://127.0.0.1:4010/metrics
+curl -s http://127.0.0.1:4010/v1/metrics
 ```
 
 Metrics reset on process restart. Labels are intentionally bounded; route

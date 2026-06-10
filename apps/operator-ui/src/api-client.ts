@@ -6,6 +6,9 @@ import type {
 } from "./types.js";
 import { formatCommandRejectionMessage } from "./view-model.js";
 
+/** Stable prefix for the current Fleet Platform REST API contract. */
+const fleetRestApiPrefix = "/v1";
+
 /** Browser API client configuration for Fleet Platform REST calls. */
 export interface FleetPlatformApiClientConfig {
   readonly apiBaseUrl: string;
@@ -38,7 +41,7 @@ export class FleetPlatformApiClient {
   /** Loads the latest snapshot for one robot. */
   async getRobot(robotId: string): Promise<RobotSnapshot> {
     const body = await this.requestJson<{ readonly robot: RobotSnapshot }>(
-      `/robots/${encodeURIComponent(robotId)}`
+      `${fleetRestApiPrefix}/robots/${encodeURIComponent(robotId)}`
     );
     return body.robot;
   }
@@ -47,7 +50,7 @@ export class FleetPlatformApiClient {
   async listMissions(): Promise<readonly MissionSnapshot[]> {
     const body = await this.requestJson<{
       readonly missions: readonly MissionSnapshot[];
-    }>("/missions");
+    }>(`${fleetRestApiPrefix}/missions`);
     return body.missions;
   }
 
@@ -57,18 +60,21 @@ export class FleetPlatformApiClient {
     target: PoseTarget
   ): Promise<MissionCommandResponse> {
     const idempotencyKey = createMissionIdempotencyKey(robotId);
-    return this.requestJson<MissionCommandResponse>("/missions", {
-      method: "POST",
-      acceptCommandRejection: true,
-      headers: { "Idempotency-Key": idempotencyKey },
-      body: {
-        robotId,
-        type: "GO_TO_POSE",
-        idempotencyKey,
-        safetyClass: "NORMAL",
-        payload: { target }
+    return this.requestJson<MissionCommandResponse>(
+      `${fleetRestApiPrefix}/missions`,
+      {
+        method: "POST",
+        acceptCommandRejection: true,
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: {
+          robotId,
+          type: "GO_TO_POSE",
+          idempotencyKey,
+          safetyClass: "NORMAL",
+          payload: { target }
+        }
       }
-    });
+    );
   }
 
   /** Requests cancellation for a selected active mission. */
@@ -77,7 +83,7 @@ export class FleetPlatformApiClient {
     reason: string
   ): Promise<MissionCommandResponse> {
     return this.requestJson<MissionCommandResponse>(
-      `/missions/${encodeURIComponent(missionId)}/cancel`,
+      `${fleetRestApiPrefix}/missions/${encodeURIComponent(missionId)}/cancel`,
       {
         method: "POST",
         acceptCommandRejection: true,

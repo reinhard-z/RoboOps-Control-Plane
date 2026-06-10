@@ -128,8 +128,8 @@ kubectl -n argocd describe application <app-name>
 Verify Fleet Platform liveness and readiness:
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/health/live"
-curl -fsS "$FLEET_PLATFORM_URL/health/ready"
+curl -fsS "$FLEET_PLATFORM_URL/v1/health/live"
+curl -fsS "$FLEET_PLATFORM_URL/v1/health/ready"
 ```
 
 Verify Operator UI serves the browser app:
@@ -145,7 +145,7 @@ status become available. If the browser fails while `curl` works, first check
 Verify the simulator connects through Fleet Platform state:
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/robots/$ROBOT_ID"
+curl -fsS "$FLEET_PLATFORM_URL/v1/robots/$ROBOT_ID"
 ```
 
 The robot should show the simulator edge-agent version and an online or fresh
@@ -160,9 +160,9 @@ kubectl -n "$NAMESPACE" logs deploy/fleet-platform --tail=100
 Verify event stream and API evidence:
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/events"
-curl -fsS "$FLEET_PLATFORM_URL/audit-events"
-curl -fsS "$FLEET_PLATFORM_URL/metrics"
+curl -fsS "$FLEET_PLATFORM_URL/v1/events"
+curl -fsS "$FLEET_PLATFORM_URL/v1/audit-events"
+curl -fsS "$FLEET_PLATFORM_URL/v1/metrics"
 ```
 
 For live SSE evidence, run this briefly while creating or resetting a mission:
@@ -190,9 +190,9 @@ and the deployment boundary without live access.
   returning the mission to the reconciled state.
 - Event timeline: capture the Operator UI timeline with command, telemetry,
   stale, reconnect, and reconciliation entries visible.
-- Audit/event API snippets: save short outputs from `/events`,
-  `/audit-events`, and a focused mission read when useful.
-- Metrics endpoint: capture `/metrics` output that shows HTTP, edge, domain,
+- Audit/event API snippets: save short outputs from `/v1/events`,
+  `/v1/audit-events`, and a focused mission read when useful.
+- Metrics endpoint: capture `/v1/metrics` output that shows HTTP, edge, domain,
   audit, telemetry freshness, or readiness counters from this run.
 - Kubernetes deployment evidence: capture namespace workloads, image refs,
   rollout status, pod readiness, and selected logs.
@@ -202,10 +202,10 @@ and the deployment boundary without live access.
 Useful commands during capture:
 
 ```sh
-curl -fsS "$FLEET_PLATFORM_URL/missions"
-curl -fsS "$FLEET_PLATFORM_URL/events"
-curl -fsS "$FLEET_PLATFORM_URL/audit-events"
-curl -fsS "$FLEET_PLATFORM_URL/metrics"
+curl -fsS "$FLEET_PLATFORM_URL/v1/missions"
+curl -fsS "$FLEET_PLATFORM_URL/v1/events"
+curl -fsS "$FLEET_PLATFORM_URL/v1/audit-events"
+curl -fsS "$FLEET_PLATFORM_URL/v1/metrics"
 kubectl -n "$NAMESPACE" rollout status deploy/fleet-platform
 kubectl -n "$NAMESPACE" rollout status deploy/operator-ui
 kubectl -n "$NAMESPACE" rollout status deploy/cloud-edge-simulator

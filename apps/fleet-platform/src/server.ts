@@ -255,7 +255,13 @@ interface FleetPlatformHttpAppOptions {
   readonly metrics: FleetPlatformMetrics;
 }
 
-/** JSON response shape cached for idempotent POST /missions retries. */
+/** Dependencies used by the current public REST API version. */
+interface FleetPlatformRestV1Options extends FleetPlatformHttpAppOptions {
+  readonly missionCreationIdempotency: InMemoryIdempotencyStore;
+  readonly requestContextFor: (request: FastifyRequest) => RequestContext;
+}
+
+/** JSON response shape cached for idempotent POST /v1/missions retries. */
 interface ApiJsonResponse {
   readonly statusCode: number;
   readonly body: unknown;
@@ -456,6 +462,63 @@ function createFleetPlatformHttpApp({
     sendError(reply, 500, "INTERNAL_ERROR", "internal server error", context);
   });
 
+  app.get("/stream/events", async (_request, reply) => {
+    openSseStream(reply, eventHub, config);
+  });
+
+  // The public REST contract is versioned together while SSE and edge paths stay stable.
+  app.register(registerFleetPlatformRestV1, {
+    prefix: "/v1",
+    service,
+    eventHub,
+    config,
+    logger,
+    metrics,
+    missionCreationIdempotency,
+    requestContextFor
+  });
+
+  app.get("/edge/connect", async (request, reply) => {
+    sendError(
+      reply,
+      426,
+      "WEBSOCKET_REQUIRED",
+      "edge connections must use WebSocket upgrade",
+      requestContextFor(request)
+    );
+  });
+
+  app.all("/demo/*", async (request, reply) => {
+    await handleDemoRequest(
+      request,
+      reply,
+      service,
+      config,
+      requestContextFor(request),
+      parseFastifyRequestUrl(request)
+    );
+  });
+
+  app.setNotFoundHandler((request, reply) => {
+    sendError(reply, 404, "NOT_FOUND", "route not found", requestContextFor(request));
+  });
+
+  return app;
+}
+
+/** Registers the current Fleet Platform REST API under the caller-provided prefix. */
+async function registerFleetPlatformRestV1(
+  app: FastifyInstance,
+  {
+    service,
+    eventHub,
+    config,
+    logger,
+    metrics,
+    missionCreationIdempotency,
+    requestContextFor
+  }: FleetPlatformRestV1Options
+): Promise<void> {
   app.get("/health/live", async (_request, reply) => {
     sendJson(reply, 200, { status: "ok" });
   });
@@ -474,10 +537,6 @@ function createFleetPlatformHttpApp({
 
   app.get("/metrics", async (_request, reply) => {
     sendMetrics(reply, metrics);
-  });
-
-  app.get("/stream/events", async (_request, reply) => {
-    openSseStream(reply, eventHub, config);
   });
 
   app.post("/missions", async (request, reply) => {
@@ -606,36 +665,11 @@ function createFleetPlatformHttpApp({
 
   app.get("/audit-events", async (request, reply) => {
     sendJson(reply, 200, {
-      auditEvents: await service.listAuditEvents(queryFilters(parseFastifyRequestUrl(request)))
+      auditEvents: await service.listAuditEvents(
+        queryFilters(parseFastifyRequestUrl(request))
+      )
     });
   });
-
-  app.get("/edge/connect", async (request, reply) => {
-    sendError(
-      reply,
-      426,
-      "WEBSOCKET_REQUIRED",
-      "edge connections must use WebSocket upgrade",
-      requestContextFor(request)
-    );
-  });
-
-  app.all("/demo/*", async (request, reply) => {
-    await handleDemoRequest(
-      request,
-      reply,
-      service,
-      config,
-      requestContextFor(request),
-      parseFastifyRequestUrl(request)
-    );
-  });
-
-  app.setNotFoundHandler((request, reply) => {
-    sendError(reply, 404, "NOT_FOUND", "route not found", requestContextFor(request));
-  });
-
-  return app;
 }
 
 /** Verifies the configured repository can load the current domain aggregate. */
