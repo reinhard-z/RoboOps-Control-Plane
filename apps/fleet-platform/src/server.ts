@@ -43,13 +43,17 @@ import type {
   ApiErrorBody,
   FleetPlatformConfig,
   RequestContext,
-  ValidationIssue
+  ValidationIssue,
+  ValidationResult
 } from "./types.js";
 import {
   parseCancelMissionRequest,
   parseCreateMissionRequest
 } from "./validation.js";
 import { EdgeWebSocketGateway } from "./websocket.js";
+
+const missionCreationIdempotencyTtlMs = 10 * 60 * 1000;
+const missionCreationIdempotencyMaxEntries = 1_000;
 
 /** Constructed Fleet Platform runtime used by CLI startup and integration tests. */
 export interface FleetPlatformRuntime {
@@ -251,6 +255,135 @@ interface FleetPlatformHttpAppOptions {
   readonly metrics: FleetPlatformMetrics;
 }
 
+/** JSON response shape cached for idempotent POST /missions retries. */
+interface ApiJsonResponse {
+  readonly statusCode: number;
+  readonly body: unknown;
+}
+
+/** Memory bounds for the process-local mission idempotency cache. */
+interface IdempotencyStoreOptions {
+  readonly ttlMs: number;
+  readonly maxEntries: number;
+}
+
+/** Cached idempotency record, including pending responses for overlapping retries. */
+interface IdempotencyRecord {
+  readonly bodySignature: string;
+  readonly expiresAtMs: number;
+  readonly createdAtMs: number;
+  readonly response: Promise<ApiJsonResponse>;
+}
+
+/** Result of reserving or looking up one idempotency key. */
+type IdempotencyReservation =
+  | {
+      readonly status: "RESERVED";
+      commit(response: ApiJsonResponse): void;
+      rollback(error: unknown): void;
+    }
+  | { readonly status: "REPLAY"; readonly response: Promise<ApiJsonResponse> }
+  | { readonly status: "CONFLICT" };
+
+/** Keeps short-lived HTTP idempotency responses bounded to this Fleet Platform process. */
+class InMemoryIdempotencyStore {
+  private readonly records = new Map<string, IdempotencyRecord>();
+
+  constructor(private readonly options: IdempotencyStoreOptions) {}
+
+  /** Reserves a new key or returns the existing response/conflict decision. */
+  reserve(
+    key: string,
+    bodySignature: string,
+    nowMs: number
+  ): IdempotencyReservation {
+    this.pruneExpired(nowMs);
+
+    const existing = this.records.get(key);
+    if (existing) {
+      if (existing.bodySignature !== bodySignature) {
+        return { status: "CONFLICT" };
+      }
+      return { status: "REPLAY", response: existing.response };
+    }
+
+    let resolveResponse: (response: ApiJsonResponse) => void = () => undefined;
+    let rejectResponse: (error: unknown) => void = () => undefined;
+    const response = new Promise<ApiJsonResponse>((resolve, reject) => {
+      resolveResponse = resolve;
+      rejectResponse = reject;
+    });
+    void response.catch(() => undefined);
+
+    const record: IdempotencyRecord = {
+      bodySignature,
+      createdAtMs: nowMs,
+      expiresAtMs: nowMs + this.options.ttlMs,
+      response
+    };
+    this.records.set(key, record);
+    this.enforceMaxEntries(key);
+
+    let settled = false;
+    return {
+      status: "RESERVED",
+      commit: (cachedResponse) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolveResponse(cachedResponse);
+      },
+      rollback: (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (this.records.get(key) === record) {
+          this.records.delete(key);
+        }
+        rejectResponse(error);
+      }
+    };
+  }
+
+  /** Drops expired entries opportunistically during request handling. */
+  private pruneExpired(nowMs: number): void {
+    for (const [key, record] of this.records) {
+      if (record.expiresAtMs <= nowMs) {
+        this.records.delete(key);
+      }
+    }
+  }
+
+  /** Evicts oldest records so an unbounded stream of keys cannot grow memory forever. */
+  private enforceMaxEntries(protectedKey: string): void {
+    while (this.records.size > this.options.maxEntries) {
+      const oldestKey = this.oldestEvictableKey(protectedKey);
+      if (!oldestKey) {
+        return;
+      }
+      this.records.delete(oldestKey);
+    }
+  }
+
+  /** Finds the oldest record that is not the key being reserved right now. */
+  private oldestEvictableKey(protectedKey: string): string | undefined {
+    let oldestKey: string | undefined;
+    let oldestCreatedAtMs = Number.POSITIVE_INFINITY;
+    for (const [key, record] of this.records) {
+      if (key === protectedKey) {
+        continue;
+      }
+      if (record.createdAtMs < oldestCreatedAtMs) {
+        oldestKey = key;
+        oldestCreatedAtMs = record.createdAtMs;
+      }
+    }
+    return oldestKey;
+  }
+}
+
 /** Builds the Fastify REST/SSE app while leaving WebSocket upgrades on the raw server. */
 function createFleetPlatformHttpApp({
   service,
@@ -262,6 +395,10 @@ function createFleetPlatformHttpApp({
   const app = Fastify({
     bodyLimit: 1024 * 1024,
     logger: false
+  });
+  const missionCreationIdempotency = new InMemoryIdempotencyStore({
+    ttlMs: missionCreationIdempotencyTtlMs,
+    maxEntries: missionCreationIdempotencyMaxEntries
   });
   const requestContexts = new WeakMap<FastifyRequest, RequestContext>();
   const requestContextFor = (request: FastifyRequest): RequestContext => {
@@ -290,7 +427,12 @@ function createFleetPlatformHttpApp({
   });
 
   app.register(cors, {
-    allowedHeaders: ["Content-Type", "X-Correlation-Id", "X-Demo-Admin-Token"],
+    allowedHeaders: [
+      "Content-Type",
+      "Idempotency-Key",
+      "X-Correlation-Id",
+      "X-Demo-Admin-Token"
+    ],
     methods: ["GET", "POST", "OPTIONS"],
     origin: config.corsAllowOrigin
   });
@@ -346,8 +488,47 @@ function createFleetPlatformHttpApp({
       return;
     }
 
-    const result = await service.createMission(parsed.value, context);
-    sendDispatchResult(reply, context, result);
+    const idempotencyKey = readIdempotencyKeyHeader(request.headers);
+    if (!idempotencyKey.ok) {
+      sendValidationError(reply, context, idempotencyKey.issues);
+      return;
+    }
+
+    const reservation = missionCreationIdempotency.reserve(
+      idempotencyKey.value,
+      stableSerialize(request.body ?? {}),
+      Date.now()
+    );
+    if (reservation.status === "CONFLICT") {
+      sendError(
+        reply,
+        409,
+        "IDEMPOTENCY_KEY_REUSE_CONFLICT",
+        "idempotency key was already used with a different request body",
+        context
+      );
+      return;
+    }
+    if (reservation.status === "REPLAY") {
+      sendJsonResponse(reply, await reservation.response);
+      return;
+    }
+
+    try {
+      const missionRequest = {
+        ...parsed.value,
+        idempotencyKey: parsed.value.idempotencyKey ?? idempotencyKey.value
+      };
+      const response = dispatchResultResponse(
+        context,
+        await service.createMission(missionRequest, context)
+      );
+      reservation.commit(response);
+      sendJsonResponse(reply, response);
+    } catch (error) {
+      reservation.rollback(error);
+      throw error;
+    }
   });
 
   app.get("/missions", async (_request, reply) => {
@@ -648,20 +829,32 @@ function sendDispatchResult(
     readonly deliveryCount: number;
   }
 ): void {
+  sendJsonResponse(reply, dispatchResultResponse(context, body));
+}
+
+/** Converts a mission command response into its HTTP status and JSON body. */
+function dispatchResultResponse(
+  context: RequestContext,
+  body: {
+    readonly result: { readonly status: string; readonly reason?: string };
+    readonly deliveryCount: number;
+  }
+): ApiJsonResponse {
   if (body.result.status === "ACCEPTED") {
-    sendJson(reply, 202, body);
-    return;
+    return { statusCode: 202, body };
   }
 
   if (body.result.status === "IDEMPOTENT_REPLAY") {
-    sendJson(reply, 200, body);
-    return;
+    return { statusCode: 200, body };
   }
 
-  sendJson(reply, statusForRejection(body.result.reason), {
-    ...body,
-    correlationId: context.correlationId
-  });
+  return {
+    statusCode: statusForRejection(body.result.reason),
+    body: {
+      ...body,
+      correlationId: context.correlationId
+    }
+  };
 }
 
 /** Maps domain rejection reasons to stable HTTP status codes. */
@@ -690,6 +883,11 @@ function sendJson(
   body: unknown
 ): void {
   reply.code(statusCode).type("application/json; charset=utf-8").send(body);
+}
+
+/** Sends a precomputed JSON response, typically from the idempotency cache. */
+function sendJsonResponse(reply: FastifyReply, response: ApiJsonResponse): void {
+  sendJson(reply, response.statusCode, response.body);
 }
 
 /** Sends the current in-process metrics in Prometheus text format. */
@@ -730,6 +928,55 @@ function sendError(
     }
   };
   sendJson(reply, statusCode, body);
+}
+
+/** Reads the required HTTP idempotency key using small limits suitable for cache keys. */
+function readIdempotencyKeyHeader(
+  headers: IncomingHttpHeaders
+): ValidationResult<string> {
+  const rawValue = headers["idempotency-key"];
+  if (rawValue === undefined) {
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "Idempotency-Key",
+          message: "idempotency key header is required"
+        }
+      ]
+    };
+  }
+  if (Array.isArray(rawValue)) {
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "Idempotency-Key",
+          message: "idempotency key header must appear once"
+        }
+      ]
+    };
+  }
+
+  const value = rawValue.trim();
+  const issues: ValidationIssue[] = [];
+  if (value.length === 0) {
+    issues.push({
+      path: "Idempotency-Key",
+      message: "idempotency key header must not be empty"
+    });
+  }
+  if (value.length > 255) {
+    issues.push({
+      path: "Idempotency-Key",
+      message: "idempotency key header must be at most 255 characters"
+    });
+  }
+
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+  return { ok: true, value };
 }
 
 /** Records the final HTTP status after the response has been written. */
@@ -815,4 +1062,21 @@ function queryFilters(url: URL): { readonly missionId?: string; readonly robotId
     ...(missionId ? { missionId } : {}),
     ...(robotId ? { robotId } : {})
   };
+}
+
+/** Serializes parsed JSON with sorted object keys so formatting and key order do not matter. */
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "undefined";
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  const entries = Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`);
+  return `{${entries.join(",")}}`;
 }

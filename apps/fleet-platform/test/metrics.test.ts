@@ -82,22 +82,30 @@ describe("fleet platform observability", () => {
   });
 
   it("emits safe structured incident logs for command decisions", async () => {
-    const accepted = await postJson(`${baseUrl}/missions`, {
-      robotId: "robot-a",
-      type: "GO_TO_POSE",
-      commandId: "cmd-observable-001",
-      idempotencyKey: "operator:test:observability:one",
-      payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
-    });
+    const accepted = await postJson(
+      `${baseUrl}/missions`,
+      {
+        robotId: "robot-a",
+        type: "GO_TO_POSE",
+        commandId: "cmd-observable-001",
+        idempotencyKey: "operator:test:observability:one",
+        payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
+      },
+      { "Idempotency-Key": "operator:test:observability:one" }
+    );
     expect(accepted.status).toBe(202);
 
-    const rejected = await postJson(`${baseUrl}/missions`, {
-      robotId: "robot-a",
-      type: "GO_TO_POSE",
-      commandId: "cmd-observable-001",
-      idempotencyKey: "operator:test:observability:two",
-      payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
-    });
+    const rejected = await postJson(
+      `${baseUrl}/missions`,
+      {
+        robotId: "robot-a",
+        type: "GO_TO_POSE",
+        commandId: "cmd-observable-001",
+        idempotencyKey: "operator:test:observability:two",
+        payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
+      },
+      { "Idempotency-Key": "operator:test:observability:two" }
+    );
     expect(rejected.status).toBe(409);
 
     expect(logger.entries).toContainEqual({
@@ -162,11 +170,12 @@ class CapturingStructuredLogger implements StructuredLogger {
 /** Posts JSON and returns both status and parsed response body. */
 async function postJson(
   url: string,
-  body: unknown
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {}
 ): Promise<{ readonly status: number; readonly body: unknown }> {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
   return { status: response.status, body: await response.json() };

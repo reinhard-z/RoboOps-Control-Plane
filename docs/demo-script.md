@@ -116,8 +116,13 @@ A normal mission can still be created without demo endpoints:
 ```sh
 curl -s http://127.0.0.1:4010/missions \
   -H 'content-type: application/json' \
+  -H 'idempotency-key: demo-script-mission-001' \
   -d '{"robotId":"robot-a","type":"GO_TO_POSE","payload":{"target":{"x":2,"y":4.5,"theta":1.57}}}'
 ```
+
+`POST /missions` requires an `Idempotency-Key` header. Retrying with the same
+key and same JSON body returns the original response without creating a second
+mission; reusing the key with a different body returns `409 Conflict`.
 
 Use the returned mission id for focused reads:
 
