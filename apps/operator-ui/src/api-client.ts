@@ -56,12 +56,15 @@ export class FleetPlatformApiClient {
     robotId: string,
     target: PoseTarget
   ): Promise<MissionCommandResponse> {
+    const idempotencyKey = createMissionIdempotencyKey(robotId);
     return this.requestJson<MissionCommandResponse>("/missions", {
       method: "POST",
       acceptCommandRejection: true,
+      headers: { "Idempotency-Key": idempotencyKey },
       body: {
         robotId,
         type: "GO_TO_POSE",
+        idempotencyKey,
         safetyClass: "NORMAL",
         payload: { target }
       }
@@ -173,6 +176,11 @@ export class FleetPlatformApiClient {
   private apiUrl(path: string): string {
     return `${this.config.apiBaseUrl}${path.startsWith("/") ? path : `/${path}`}`;
   }
+}
+
+/** Creates a request-scoped key shared by HTTP replay protection and domain records. */
+function createMissionIdempotencyKey(robotId: string): string {
+  return `operator-ui:${robotId}:${globalThis.crypto.randomUUID()}`;
 }
 
 /** Parses JSON responses without hiding HTTP status failures behind SyntaxError. */

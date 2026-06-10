@@ -8,10 +8,12 @@ describe("operator UI API client", () => {
     const rejection = rejectedMissionResponse();
     let requestUrl = "";
     let requestBody: unknown;
+    let requestHeaders: HeadersInit | undefined;
     const api = new FleetPlatformApiClient({
       apiBaseUrl: "http://fleet.test",
       fetchImpl: async (input, init) => {
         requestUrl = String(input);
+        requestHeaders = init?.headers;
         requestBody = JSON.parse(String(init?.body)) as unknown;
         return jsonResponse(rejection, 409);
       }
@@ -29,6 +31,9 @@ describe("operator UI API client", () => {
       type: "GO_TO_POSE",
       safetyClass: "NORMAL"
     });
+    const idempotencyKey = readHeader(requestHeaders, "Idempotency-Key");
+    expect(idempotencyKey).toMatch(/^operator-ui:robot-a:/);
+    expect(requestBody).toMatchObject({ idempotencyKey });
     expect(result).toEqual(rejection);
   });
 
@@ -141,6 +146,23 @@ describe("operator UI API client", () => {
     });
   });
 });
+
+/** Reads a test request header from any HeadersInit shape the client may produce. */
+function readHeader(headers: HeadersInit | undefined, name: string): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+  if (headers instanceof Headers) {
+    return headers.get(name) ?? undefined;
+  }
+  if (Array.isArray(headers)) {
+    const entry = headers.find(
+      ([key]) => key.toLowerCase() === name.toLowerCase()
+    );
+    return entry?.[1];
+  }
+  return headers[name] ?? headers[name.toLowerCase()];
+}
 
 /** Creates a Response with the JSON shape returned by Fleet Platform tests. */
 function jsonResponse(body: unknown, status: number = 200): Response {

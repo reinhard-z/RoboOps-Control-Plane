@@ -60,12 +60,16 @@ describe("fleet platform API and edge gateway", () => {
     const edge = await openWebSocket(edgeUrl);
     const commandMessagePromise = nextWebSocketMessageOfType(edge, "platform.command");
 
-    const createResponse = await postJson(`${baseUrl}/missions`, {
-      robotId: "robot-a",
-      type: "GO_TO_POSE",
-      idempotencyKey: "operator:test:api-edge:create",
-      payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
-    });
+    const createResponse = await postJson(
+      `${baseUrl}/missions`,
+      {
+        robotId: "robot-a",
+        type: "GO_TO_POSE",
+        idempotencyKey: "operator:test:api-edge:create",
+        payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
+      },
+      { "Idempotency-Key": "operator:test:api-edge:create" }
+    );
     expect(createResponse.status).toBe(202);
     expect((createResponse.body as { readonly deliveryCount: number }).deliveryCount).toBe(
       1
@@ -181,13 +185,93 @@ describe("fleet platform API and edge gateway", () => {
     edge.close();
   });
 
-  it("delivers a queued command only once when the edge sends hello after connecting", async () => {
-    const createResponse = await postJson(`${baseUrl}/missions`, {
+  it("replays mission creation when Idempotency-Key and request body match", async () => {
+    const body = {
       robotId: "robot-a",
       type: "GO_TO_POSE",
-      idempotencyKey: "operator:test:queued:create",
-      payload: { target: { x: 3, y: 4, theta: 0.25 } }
+      payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
+    };
+    const headers = {
+      "Idempotency-Key": "operator:test:http-idempotency:replay"
+    };
+
+    const first = await postJson(`${baseUrl}/missions`, body, headers);
+    const replay = await postJson(`${baseUrl}/missions`, body, headers);
+
+    expect(first.status).toBe(202);
+    expect(replay.status).toBe(202);
+    expect(replay.body).toEqual(first.body);
+    expect(await listMissions(baseUrl)).toHaveLength(1);
+  });
+
+  it("rejects Idempotency-Key reuse with a different request body", async () => {
+    const headers = {
+      "Idempotency-Key": "operator:test:http-idempotency:conflict"
+    };
+
+    const first = await postJson(
+      `${baseUrl}/missions`,
+      {
+        robotId: "robot-a",
+        type: "GO_TO_POSE",
+        payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
+      },
+      headers
+    );
+    const conflict = await postJson(
+      `${baseUrl}/missions`,
+      {
+        robotId: "robot-a",
+        type: "GO_TO_POSE",
+        payload: { target: { x: 3, y: 4.5, theta: 1.57 } }
+      },
+      headers
+    );
+
+    expect(first.status).toBe(202);
+    expect(conflict.status).toBe(409);
+    expect(conflict.body).toMatchObject({
+      error: {
+        code: "IDEMPOTENCY_KEY_REUSE_CONFLICT",
+        message: "idempotency key was already used with a different request body"
+      }
     });
+    expect(await listMissions(baseUrl)).toHaveLength(1);
+  });
+
+  it("requires Idempotency-Key for mission creation", async () => {
+    const response = await postJson(`${baseUrl}/missions`, {
+      robotId: "robot-a",
+      type: "GO_TO_POSE",
+      payload: { target: { x: 2, y: 4.5, theta: 1.57 } }
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      error: {
+        code: "VALIDATION_FAILED",
+        details: [
+          {
+            path: "Idempotency-Key",
+            message: "idempotency key header is required"
+          }
+        ]
+      }
+    });
+    expect(await listMissions(baseUrl)).toHaveLength(0);
+  });
+
+  it("delivers a queued command only once when the edge sends hello after connecting", async () => {
+    const createResponse = await postJson(
+      `${baseUrl}/missions`,
+      {
+        robotId: "robot-a",
+        type: "GO_TO_POSE",
+        idempotencyKey: "operator:test:queued:create",
+        payload: { target: { x: 3, y: 4, theta: 0.25 } }
+      },
+      { "Idempotency-Key": "operator:test:queued:create" }
+    );
     expect(createResponse.status).toBe(202);
     expect((createResponse.body as { readonly deliveryCount: number }).deliveryCount).toBe(
       0
@@ -272,12 +356,16 @@ describe("fleet platform API and edge gateway", () => {
 
     const reader = streamResponse.body.getReader();
     const eventPromise = readStreamUntil(reader, "mission.command.dispatched");
-    const createResponse = await postJson(`${baseUrl}/missions`, {
-      robotId: "robot-a",
-      type: "GO_TO_POSE",
-      idempotencyKey: "operator:test:sse:create",
-      payload: { target: { x: 1, y: 2, theta: 0.5 } }
-    });
+    const createResponse = await postJson(
+      `${baseUrl}/missions`,
+      {
+        robotId: "robot-a",
+        type: "GO_TO_POSE",
+        idempotencyKey: "operator:test:sse:create",
+        payload: { target: { x: 1, y: 2, theta: 0.5 } }
+      },
+      { "Idempotency-Key": "operator:test:sse:create" }
+    );
 
     expect(createResponse.status).toBe(202);
     expect(await eventPromise).toContain("mission.command.dispatched");
@@ -575,6 +663,15 @@ async function postJson(
     body: JSON.stringify(body)
   });
   return { status: response.status, body: await response.json() };
+}
+
+/** Reads the mission collection through the public API. */
+async function listMissions(baseUrl: string): Promise<readonly unknown[]> {
+  const response = await fetch(`${baseUrl}/missions`);
+  const body = (await response.json()) as {
+    readonly missions: readonly unknown[];
+  };
+  return body.missions;
 }
 
 /** Retries an async assertion briefly while socket and HTTP updates settle. */
