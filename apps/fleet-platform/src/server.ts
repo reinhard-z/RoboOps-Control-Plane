@@ -1,6 +1,7 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { IncomingHttpHeaders, Server, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 
+import cors from "@fastify/cors";
 import type { DomainState } from "@roboops/fleet-domain";
 import {
   type DomainStateRepository,
@@ -12,6 +13,11 @@ import {
   prometheusTextContentType,
   readCorrelationIdHeader
 } from "@roboops/observability";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest
+} from "fastify";
 
 import { loadFleetPlatformConfig } from "./config.js";
 import { PlatformEventHub, type PlatformStreamEvent } from "./event-hub.js";
@@ -47,6 +53,7 @@ import { EdgeWebSocketGateway } from "./websocket.js";
 
 /** Constructed Fleet Platform runtime used by CLI startup and integration tests. */
 export interface FleetPlatformRuntime {
+  readonly app: FastifyInstance;
   readonly server: Server;
   readonly service: FleetPlatformService;
   readonly eventHub: PlatformEventHub;
@@ -91,18 +98,14 @@ export function createFleetPlatformRuntime(
   const edgeGateway = new EdgeWebSocketGateway(service, logger, metrics);
   service.setEdgeTransport(edgeGateway);
 
-  const server = createServer((request, response) => {
-    handleHttpRequest(request, response, service, eventHub, config, logger, metrics).catch(
-      (error: unknown) => {
-        logger.error("unhandled http request error", {
-          errorType: classifyErrorType(error)
-        });
-        sendError(response, config, 500, "INTERNAL_ERROR", "internal server error", {
-          correlationId: createPlatformId("corr_error")
-        });
-      }
-    );
+  const app = createFleetPlatformHttpApp({
+    service,
+    eventHub,
+    config,
+    logger,
+    metrics
   });
+  const server = app.server;
   server.on("upgrade", (request, socket, head) => {
     if (!edgeGateway.handleUpgrade(request, socket as Socket, head)) {
       socket.destroy();
@@ -111,6 +114,7 @@ export function createFleetPlatformRuntime(
   const stopFreshnessSweep = startTelemetryFreshnessSweep(service, config, logger);
 
   return {
+    app,
     server,
     service,
     eventHub,
@@ -194,9 +198,10 @@ function normalizeFleetPlatformConfig(config: FleetPlatformConfig): FleetPlatfor
 }
 
 /** Starts the Fleet Platform HTTP server and resolves when it is listening. */
-export function listenFleetPlatform(runtime: FleetPlatformRuntime): Promise<void> {
-  return new Promise((resolve) => {
-    runtime.server.listen(runtime.config.port, runtime.config.host, resolve);
+export async function listenFleetPlatform(runtime: FleetPlatformRuntime): Promise<void> {
+  await runtime.app.listen({
+    host: runtime.config.host,
+    port: runtime.config.port
   });
 }
 
@@ -237,183 +242,224 @@ function startTelemetryFreshnessSweep(
   };
 }
 
-/** Routes one HTTP request across REST, SSE, health, and demo endpoints. */
-async function handleHttpRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  service: FleetPlatformService,
-  eventHub: PlatformEventHub,
-  config: FleetPlatformConfig,
-  logger: StructuredLogger,
-  metrics: FleetPlatformMetrics
-): Promise<void> {
-  applyCors(response, config);
-  const url = parseRequestUrl(request);
-  recordHttpRequestOnFinish(response, metrics, {
-    method: request.method,
-    route: routeLabelForRequest(request.method, url?.pathname)
+/** Dependencies needed by the Fastify HTTP surface. */
+interface FleetPlatformHttpAppOptions {
+  readonly service: FleetPlatformService;
+  readonly eventHub: PlatformEventHub;
+  readonly config: FleetPlatformConfig;
+  readonly logger: StructuredLogger;
+  readonly metrics: FleetPlatformMetrics;
+}
+
+/** Builds the Fastify REST/SSE app while leaving WebSocket upgrades on the raw server. */
+function createFleetPlatformHttpApp({
+  service,
+  eventHub,
+  config,
+  logger,
+  metrics
+}: FleetPlatformHttpAppOptions): FastifyInstance {
+  const app = Fastify({
+    bodyLimit: 1024 * 1024,
+    logger: false
   });
+  const requestContexts = new WeakMap<FastifyRequest, RequestContext>();
+  const requestContextFor = (request: FastifyRequest): RequestContext => {
+    const existing = requestContexts.get(request);
+    if (existing) {
+      return existing;
+    }
+    const context = createRequestContext(request.headers);
+    requestContexts.set(request, context);
+    return context;
+  };
 
-  if (request.method === "OPTIONS") {
-    response.writeHead(204);
-    response.end();
-    return;
-  }
-
-  if (!url) {
-    sendError(response, config, 400, "BAD_REQUEST", "request URL is required", {
-      correlationId: createPlatformId("corr_bad_request")
+  app.addHook("onRequest", (request, reply, done) => {
+    const url = parseFastifyRequestUrl(request);
+    const context = requestContextFor(request);
+    recordHttpRequestOnFinish(reply.raw, metrics, {
+      method: request.method,
+      route: routeLabelForRequest(request.method, url.pathname)
     });
-    return;
-  }
-
-  const context = createRequestContext(request);
-  logger.info("http request received", {
-    method: request.method,
-    path: url.pathname,
-    correlationId: context.correlationId
+    logger.info("http request received", {
+      method: request.method,
+      path: url.pathname,
+      correlationId: context.correlationId
+    });
+    done();
   });
 
-  if (request.method === "GET" && url.pathname === "/health/live") {
-    sendJson(response, config, 200, { status: "ok" });
-    return;
-  }
+  app.register(cors, {
+    allowedHeaders: ["Content-Type", "X-Correlation-Id", "X-Demo-Admin-Token"],
+    methods: ["GET", "POST", "OPTIONS"],
+    origin: config.corsAllowOrigin
+  });
 
-  if (request.method === "GET" && url.pathname === "/health/ready") {
+  app.setErrorHandler((error, request, reply) => {
+    const context = requestContextFor(request);
+    const validationIssue = fastifyBodyValidationIssue(error);
+    if (validationIssue) {
+      sendValidationError(reply, context, [validationIssue]);
+      return;
+    }
+    const clientError = fastifyClientError(error);
+    if (clientError) {
+      sendError(reply, clientError.statusCode, clientError.code, clientError.message, context);
+      return;
+    }
+
+    logger.error("unhandled http request error", {
+      errorType: classifyErrorType(error)
+    });
+    sendError(reply, 500, "INTERNAL_ERROR", "internal server error", context);
+  });
+
+  app.get("/health/live", async (_request, reply) => {
+    sendJson(reply, 200, { status: "ok" });
+  });
+
+  app.get("/health/ready", async (request, reply) => {
     await sendReadinessResponse(
-      response,
+      reply,
       service,
       eventHub,
       config,
-      context,
+      requestContextFor(request),
       logger,
       metrics
     );
-    return;
-  }
+  });
 
-  if (request.method === "GET" && url.pathname === "/metrics") {
-    sendMetrics(response, config, metrics);
-    return;
-  }
+  app.get("/metrics", async (_request, reply) => {
+    sendMetrics(reply, metrics);
+  });
 
-  if (request.method === "GET" && url.pathname === "/stream/events") {
-    openSseStream(response, eventHub, config);
-    return;
-  }
+  app.get("/stream/events", async (_request, reply) => {
+    openSseStream(reply, eventHub, config);
+  });
 
-  if (url.pathname.startsWith("/demo/")) {
-    await handleDemoRequest(request, response, service, config, context, url);
-    return;
-  }
-
-  if (request.method === "POST" && url.pathname === "/missions") {
-    const body = await readJsonBody(request);
-    if (!body.ok) {
-      sendValidationError(response, config, context, body.issues);
-      return;
-    }
-    const parsed = parseCreateMissionRequest(body.value);
+  app.post("/missions", async (request, reply) => {
+    const context = requestContextFor(request);
+    const parsed = parseCreateMissionRequest(request.body ?? {});
     if (!parsed.ok) {
-      sendValidationError(response, config, context, parsed.issues);
+      sendValidationError(reply, context, parsed.issues);
       return;
     }
 
     const result = await service.createMission(parsed.value, context);
-    sendDispatchResult(response, config, context, result);
-    return;
-  }
+    sendDispatchResult(reply, context, result);
+  });
 
-  if (request.method === "GET" && url.pathname === "/missions") {
-    sendJson(response, config, 200, { missions: await service.listMissions() });
-    return;
-  }
+  app.get("/missions", async (_request, reply) => {
+    sendJson(reply, 200, { missions: await service.listMissions() });
+  });
 
-  const missionCancelMatch = url.pathname.match(/^\/missions\/([^/]+)\/cancel$/);
-  if (request.method === "POST" && missionCancelMatch?.[1]) {
-    const body = await readJsonBody(request);
-    if (!body.ok) {
-      sendValidationError(response, config, context, body.issues);
-      return;
+  app.post<{ Params: { missionId: string } }>(
+    "/missions/:missionId/cancel",
+    async (request, reply) => {
+      const context = requestContextFor(request);
+      const parsed = parseCancelMissionRequest(request.body ?? {});
+      if (!parsed.ok) {
+        sendValidationError(reply, context, parsed.issues);
+        return;
+      }
+
+      const result = await service.cancelMission(
+        request.params.missionId,
+        parsed.value,
+        context
+      );
+      if (!result) {
+        sendError(reply, 404, "MISSION_NOT_FOUND", "mission not found", context);
+        return;
+      }
+      sendDispatchResult(reply, context, result);
     }
-    const parsed = parseCancelMissionRequest(body.value);
-    if (!parsed.ok) {
-      sendValidationError(response, config, context, parsed.issues);
-      return;
+  );
+
+  app.get<{ Params: { missionId: string } }>(
+    "/missions/:missionId",
+    async (request, reply) => {
+      const mission = await service.getMission(request.params.missionId);
+      if (!mission) {
+        sendError(
+          reply,
+          404,
+          "MISSION_NOT_FOUND",
+          "mission not found",
+          requestContextFor(request)
+        );
+        return;
+      }
+      sendJson(reply, 200, { mission });
     }
+  );
 
-    const result = await service.cancelMission(
-      decodeURIComponent(missionCancelMatch[1]),
-      parsed.value,
-      context
-    );
-    if (!result) {
-      sendError(response, config, 404, "MISSION_NOT_FOUND", "mission not found", context);
-      return;
+  app.get("/robots", async (_request, reply) => {
+    sendJson(reply, 200, { robots: await service.listRobots() });
+  });
+
+  app.get<{ Params: { robotId: string } }>(
+    "/robots/:robotId",
+    async (request, reply) => {
+      const robot = await service.getRobot(request.params.robotId);
+      if (!robot) {
+        sendError(
+          reply,
+          404,
+          "ROBOT_NOT_FOUND",
+          "robot not found",
+          requestContextFor(request)
+        );
+        return;
+      }
+      sendJson(reply, 200, { robot });
     }
-    sendDispatchResult(response, config, context, result);
-    return;
-  }
+  );
 
-  const missionMatch = url.pathname.match(/^\/missions\/([^/]+)$/);
-  if (request.method === "GET" && missionMatch?.[1]) {
-    const mission = await service.getMission(decodeURIComponent(missionMatch[1]));
-    if (!mission) {
-      sendError(response, config, 404, "MISSION_NOT_FOUND", "mission not found", context);
-      return;
-    }
-    sendJson(response, config, 200, { mission });
-    return;
-  }
-
-  if (request.method === "GET" && url.pathname === "/robots") {
-    sendJson(response, config, 200, { robots: await service.listRobots() });
-    return;
-  }
-
-  const robotMatch = url.pathname.match(/^\/robots\/([^/]+)$/);
-  if (request.method === "GET" && robotMatch?.[1]) {
-    const robot = await service.getRobot(decodeURIComponent(robotMatch[1]));
-    if (!robot) {
-      sendError(response, config, 404, "ROBOT_NOT_FOUND", "robot not found", context);
-      return;
-    }
-    sendJson(response, config, 200, { robot });
-    return;
-  }
-
-  if (request.method === "GET" && url.pathname === "/events") {
-    sendJson(response, config, 200, {
-      events: await service.listEvents(queryFilters(url))
+  app.get("/events", async (request, reply) => {
+    sendJson(reply, 200, {
+      events: await service.listEvents(queryFilters(parseFastifyRequestUrl(request)))
     });
-    return;
-  }
+  });
 
-  if (request.method === "GET" && url.pathname === "/audit-events") {
-    sendJson(response, config, 200, {
-      auditEvents: await service.listAuditEvents(queryFilters(url))
+  app.get("/audit-events", async (request, reply) => {
+    sendJson(reply, 200, {
+      auditEvents: await service.listAuditEvents(queryFilters(parseFastifyRequestUrl(request)))
     });
-    return;
-  }
+  });
 
-  if (request.method === "GET" && url.pathname === "/edge/connect") {
+  app.get("/edge/connect", async (request, reply) => {
     sendError(
-      response,
-      config,
+      reply,
       426,
       "WEBSOCKET_REQUIRED",
       "edge connections must use WebSocket upgrade",
-      context
+      requestContextFor(request)
     );
-    return;
-  }
+  });
 
-  sendError(response, config, 404, "NOT_FOUND", "route not found", context);
+  app.all("/demo/*", async (request, reply) => {
+    await handleDemoRequest(
+      request,
+      reply,
+      service,
+      config,
+      requestContextFor(request),
+      parseFastifyRequestUrl(request)
+    );
+  });
+
+  app.setNotFoundHandler((request, reply) => {
+    sendError(reply, 404, "NOT_FOUND", "route not found", requestContextFor(request));
+  });
+
+  return app;
 }
 
 /** Verifies the configured repository can load the current domain aggregate. */
 async function sendReadinessResponse(
-  response: ServerResponse,
+  reply: FastifyReply,
   service: FleetPlatformService,
   eventHub: PlatformEventHub,
   config: FleetPlatformConfig,
@@ -423,7 +469,7 @@ async function sendReadinessResponse(
 ): Promise<void> {
   try {
     await readStateForReadiness(service);
-    sendJson(response, config, 200, {
+    sendJson(reply, 200, {
       status: "ready",
       persistence: {
         mode: config.persistence.mode
@@ -444,8 +490,7 @@ async function sendReadinessResponse(
       errorType
     });
     sendError(
-      response,
-      config,
+      reply,
       503,
       "PERSISTENCE_NOT_READY",
       "persistence backend is not ready",
@@ -465,38 +510,38 @@ async function readStateForReadiness(service: FleetPlatformService): Promise<voi
 
 /** Handles demo-only fault and scenario endpoints after applying demo auth gates. */
 async function handleDemoRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
+  request: FastifyRequest,
+  reply: FastifyReply,
   service: FleetPlatformService,
   config: FleetPlatformConfig,
   context: RequestContext,
   url: URL
 ): Promise<void> {
-  const gate = validateDemoAccess(request, config);
+  const gate = validateDemoAccess(request.headers, config);
   if (!gate.ok) {
-    sendError(response, config, gate.statusCode, gate.code, gate.message, context);
+    sendError(reply, gate.statusCode, gate.code, gate.message, context);
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/scenarios/reset") {
-    sendJson(response, config, 200, { state: await service.resetDemo(context) });
+    sendJson(reply, 200, { state: await service.resetDemo(context) });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/scenarios/incident/start") {
-    sendDispatchResult(response, config, context, await service.startIncident(context));
+    sendDispatchResult(reply, context, await service.startIncident(context));
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/faults/disconnect") {
-    sendJson(response, config, 200, {
+    sendJson(reply, 200, {
       result: await service.disconnectDemoRobot(context)
     });
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/demo/faults/reconnect") {
-    sendJson(response, config, 200, {
+    sendJson(reply, 200, {
       result: await service.reconnectDemoRobot(context)
     });
     return;
@@ -504,8 +549,7 @@ async function handleDemoRequest(
 
   if (request.method === "POST" && url.pathname === "/demo/faults/duplicate-command") {
     sendDispatchResult(
-      response,
-      config,
+      reply,
       context,
       await service.duplicateDemoCommand(context)
     );
@@ -513,16 +557,16 @@ async function handleDemoRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/demo/faults/low-battery") {
-    sendDispatchResult(response, config, context, await service.lowBatteryDemo(context));
+    sendDispatchResult(reply, context, await service.lowBatteryDemo(context));
     return;
   }
 
-  sendError(response, config, 404, "NOT_FOUND", "demo route not found", context);
+  sendError(reply, 404, "NOT_FOUND", "demo route not found", context);
 }
 
 /** Validates that demo endpoints are both enabled and explicitly authenticated. */
 function validateDemoAccess(
-  request: IncomingMessage,
+  headers: IncomingHttpHeaders,
   config: FleetPlatformConfig
 ):
   | { readonly ok: true }
@@ -543,7 +587,7 @@ function validateDemoAccess(
 
   if (
     !config.demoAdminToken ||
-    request.headers["x-demo-admin-token"] !== config.demoAdminToken
+    headers["x-demo-admin-token"] !== config.demoAdminToken
   ) {
     return {
       ok: false,
@@ -558,10 +602,12 @@ function validateDemoAccess(
 
 /** Opens a server-sent event stream for browser dashboards. */
 function openSseStream(
-  response: ServerResponse,
+  reply: FastifyReply,
   eventHub: PlatformEventHub,
   config: FleetPlatformConfig
 ): void {
+  reply.hijack();
+  const response = reply.raw;
   response.writeHead(200, {
     "Access-Control-Allow-Origin": config.corsAllowOrigin,
     "Cache-Control": "no-cache, no-transform",
@@ -593,48 +639,9 @@ function writeSseEvent(response: ServerResponse, event: PlatformStreamEvent): vo
   response.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
-type BodyReadResult =
-  | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly issues: readonly ValidationIssue[] };
-
-/** Reads and parses a JSON request body with a small size limit for demo safety. */
-async function readJsonBody(request: IncomingMessage): Promise<BodyReadResult> {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    totalBytes += buffer.length;
-    if (totalBytes > 1024 * 1024) {
-      return {
-        ok: false,
-        issues: [{ path: "$", message: "request body must be at most 1MiB" }]
-      };
-    }
-    chunks.push(buffer);
-  }
-
-  if (chunks.length === 0) {
-    return { ok: true, value: {} };
-  }
-
-  try {
-    return {
-      ok: true,
-      value: JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown
-    };
-  } catch {
-    return {
-      ok: false,
-      issues: [{ path: "$", message: "request body must be valid JSON" }]
-    };
-  }
-}
-
 /** Sends a mission command response with HTTP status mapped from domain outcome. */
 function sendDispatchResult(
-  response: ServerResponse,
-  config: FleetPlatformConfig,
+  reply: FastifyReply,
   context: RequestContext,
   body: {
     readonly result: { readonly status: string; readonly reason?: string };
@@ -642,16 +649,16 @@ function sendDispatchResult(
   }
 ): void {
   if (body.result.status === "ACCEPTED") {
-    sendJson(response, config, 202, body);
+    sendJson(reply, 202, body);
     return;
   }
 
   if (body.result.status === "IDEMPOTENT_REPLAY") {
-    sendJson(response, config, 200, body);
+    sendJson(reply, 200, body);
     return;
   }
 
-  sendJson(response, config, statusForRejection(body.result.reason), {
+  sendJson(reply, statusForRejection(body.result.reason), {
     ...body,
     correlationId: context.correlationId
   });
@@ -678,45 +685,36 @@ function statusForRejection(reason: string | undefined): number {
 
 /** Sends JSON with common headers. */
 function sendJson(
-  response: ServerResponse,
-  config: FleetPlatformConfig,
+  reply: FastifyReply,
   statusCode: number,
   body: unknown
 ): void {
-  response.writeHead(statusCode, {
-    "Access-Control-Allow-Origin": config.corsAllowOrigin,
-    "Content-Type": "application/json; charset=utf-8"
-  });
-  response.end(JSON.stringify(body));
+  reply.code(statusCode).type("application/json; charset=utf-8").send(body);
 }
 
 /** Sends the current in-process metrics in Prometheus text format. */
 function sendMetrics(
-  response: ServerResponse,
-  config: FleetPlatformConfig,
+  reply: FastifyReply,
   metrics: FleetPlatformMetrics
 ): void {
-  response.writeHead(200, {
-    "Access-Control-Allow-Origin": config.corsAllowOrigin,
-    "Content-Type": prometheusTextContentType
-  });
-  response.end(metrics.registry.renderPrometheusText());
+  reply
+    .code(200)
+    .header("Content-Type", prometheusTextContentType)
+    .send(metrics.registry.renderPrometheusText());
 }
 
 /** Sends a validation failure in the standard error response shape. */
 function sendValidationError(
-  response: ServerResponse,
-  config: FleetPlatformConfig,
+  reply: FastifyReply,
   context: RequestContext,
   issues: readonly ValidationIssue[]
 ): void {
-  sendError(response, config, 400, "VALIDATION_FAILED", "request validation failed", context, issues);
+  sendError(reply, 400, "VALIDATION_FAILED", "request validation failed", context, issues);
 }
 
 /** Sends a structured API error body. */
 function sendError(
-  response: ServerResponse,
-  config: FleetPlatformConfig,
+  reply: FastifyReply,
   statusCode: number,
   code: string,
   message: string,
@@ -731,14 +729,7 @@ function sendError(
       ...(details ? { details } : {})
     }
   };
-  sendJson(response, config, statusCode, body);
-}
-
-/** Applies permissive local CORS headers for the upcoming operator UI app. */
-function applyCors(response: ServerResponse, config: FleetPlatformConfig): void {
-  response.setHeader("Access-Control-Allow-Origin", config.corsAllowOrigin);
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Correlation-Id, X-Demo-Admin-Token");
-  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  sendJson(reply, statusCode, body);
 }
 
 /** Records the final HTTP status after the response has been written. */
@@ -759,23 +750,60 @@ function recordHttpRequestOnFinish(
   });
 }
 
+/** Converts Fastify body parser errors into the API's validation response shape. */
+function fastifyBodyValidationIssue(error: unknown): ValidationIssue | undefined {
+  const parsed = error as {
+    readonly code?: string;
+    readonly statusCode?: number;
+  };
+  if (parsed.code === "FST_ERR_CTP_BODY_TOO_LARGE" || parsed.statusCode === 413) {
+    return { path: "$", message: "request body must be at most 1MiB" };
+  }
+  if (parsed.code === "FST_ERR_CTP_INVALID_JSON_BODY") {
+    return { path: "$", message: "request body must be valid JSON" };
+  }
+  return undefined;
+}
+
+/** Maps Fastify parser client failures that should not be reported as internal errors. */
+function fastifyClientError(error: unknown):
+  | { readonly statusCode: number; readonly code: string; readonly message: string }
+  | undefined {
+  const parsed = error as {
+    readonly code?: string;
+    readonly statusCode?: number;
+  };
+  if (parsed.statusCode === 415 || parsed.code === "FST_ERR_CTP_INVALID_MEDIA_TYPE") {
+    return {
+      statusCode: 415,
+      code: "UNSUPPORTED_MEDIA_TYPE",
+      message: "request content type is not supported"
+    };
+  }
+  if (parsed.statusCode && parsed.statusCode >= 400 && parsed.statusCode < 500) {
+    return {
+      statusCode: parsed.statusCode,
+      code: "BAD_REQUEST",
+      message: "request could not be processed"
+    };
+  }
+  return undefined;
+}
+
 /** Builds request context from headers plus local fallback ids. */
-function createRequestContext(request: IncomingMessage): RequestContext {
+function createRequestContext(headers: IncomingHttpHeaders): RequestContext {
   const correlationId =
-    readCorrelationIdHeader(request.headers) ?? createPlatformId("corr_http");
+    readCorrelationIdHeader(headers) ?? createPlatformId("corr_http");
   return {
     correlationId,
     causationId: createPlatformId("http_request"),
     now: nowIso(),
-    headers: request.headers
+    headers
   };
 }
 
-/** Parses URL safely for all Node HTTP request paths. */
-function parseRequestUrl(request: IncomingMessage): URL | undefined {
-  if (!request.url) {
-    return undefined;
-  }
+/** Parses URL safely for Fastify request paths without trusting Host for routing. */
+function parseFastifyRequestUrl(request: FastifyRequest): URL {
   return new URL(request.url, "http://localhost");
 }
 
