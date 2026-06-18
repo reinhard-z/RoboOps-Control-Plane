@@ -141,7 +141,7 @@ export const commandAckV1Schema = {
   }
 } as const satisfies JsonSchema;
 
-// Generic event envelope for domain events, outbox records, and future event streams.
+// Generic event envelope for domain events and outbox records.
 export const eventEnvelopeV1Schema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://roboops.dev/schemas/event.envelope.v1.schema.json",

@@ -43,7 +43,7 @@ const tableNames = {
   stateBookmarks: `${fleetPersistenceSchema}.domain_state_bookmarks`
 } as const;
 
-/** Internal row shape queued for later at-least-once publication workers. */
+/** Internal row shape queued for at-least-once publication workers. */
 interface OutboxRecord {
   readonly aggregateType: string;
   readonly aggregateId: string;
@@ -573,7 +573,7 @@ async function insertAuditEvents(
   }
 }
 
-/** Queues new reducer records for future publication without publishing externally. */
+/** Queues new reducer records for external publication without publishing inline. */
 async function insertOutboxRecords(
   client: PoolClient,
   records: readonly OutboxRecord[]

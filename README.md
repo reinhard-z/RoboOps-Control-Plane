@@ -88,20 +88,16 @@ operator creates mission
 
 ## What Exists Now
 
-| Area                           | Status                                                                                                                                                                                                                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fleet Platform                 | Implemented TypeScript API with REST reads/actions, SSE UI events, outbound edge WebSocket gateway, in-memory state by default, optional Postgres repositories, transactional outbox write path, metrics, and structured incident logs.                                   |
-| Cloud-edge simulator           | Implemented local robot simulator for command ack, telemetry, stale telemetry, disconnect, reconnect, and simple pose movement. This is the default reviewer demo robot.                                                                                                  |
-| Isaac/Brev robotics smoke path | Documented and validated on-demand simulation path under `sim/isaac-sim`. It uses NVIDIA Brev / Isaac Launchable, Isaac Sim, Nova Carter ROS scenes, ROS2 sidecar probes, and the same Fleet Platform edge contract.                                                      |
-| Operator UI                    | Implemented lightweight browser console for mission creation/cancel, robot freshness, mission state, map movement, demo fault controls, and event timeline.                                                                                                               |
-| Event worker                   | Implemented outbox publisher worker for durable Postgres-backed runs.                                                                                                                                                                                                     |
-| ROS2 edge agent                | Skeleton only. It mirrors protocol/configuration shape but does not yet implement WebSocket transport, ROS2 topics/actions, navigation, SLAM, Isaac Sim, or hardware. The Isaac/Brev smoke path currently uses adapter scripts under `sim/isaac-sim`, not this C++ agent. |
-| Kubernetes/GitOps              | Production-reference manifests and rollout notes only. They document deploy patterns for software versions, not robot mission control.                                                                                                                                    |
+| Area                           | Status                                                                                                                                                               |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fleet Platform                 | Implemented TypeScript API with REST reads/actions, SSE UI events, outbound edge WebSocket gateway, in-memory state by default, optional Postgres repositories, transactional outbox write path, metrics, and structured incident logs. |
+| Cloud-edge simulator           | Implemented local robot simulator for command ack, telemetry, stale telemetry, disconnect, reconnect, and simple pose movement. This is the default reviewer demo robot. |
+| Isaac/Brev robotics smoke path | Documented and validated on-demand simulation path under `sim/isaac-sim`. It uses NVIDIA Brev / Isaac Launchable, Isaac Sim, Nova Carter ROS scenes, ROS2 sidecar probes, and the same Fleet Platform edge contract. |
+| Operator UI                    | Implemented lightweight browser console for mission creation/cancel, robot freshness, mission state, map movement, demo fault controls, and event timeline.          |
+| Event worker                   | Implemented outbox worker for durable Postgres-backed runs, with explicit no-op publication for local validation.                                                    |
 
 ## Boundaries
 
-- GitOps deploys Fleet Platform and edge-agent software versions. Fleet
-  Platform dispatches missions.
 - ROS2/DDS stays local to the robot-near runtime. The cloud API does not talk
   directly to ROS2/DDS.
 - The default local reviewer demo uses a simulator, not a hosted robot and not
@@ -255,17 +251,8 @@ On Linux, add `--add-host=host.docker.internal:host-gateway` when using the
 - [AWS Fargate + Brev Isaac runbook](docs/aws-fargate-brev-isaac-runbook.md)
   deploys only Fleet Platform and Operator UI to AWS and connects the Brev
   Isaac sender outbound to the hosted Fleet Platform.
-- [AWS/Kubernetes demo runbook](docs/aws-kubernetes-demo-runbook.md) explains
-  how to capture short-lived hosted demo evidence without expanding the project
-  into a production hosting guide.
-- [Robot software rollout](docs/robot-software-rollout.md) explains the
-  GitOps boundary: ArgoCD rolls out image/config versions, while Fleet Platform
-  remains responsible for missions.
-- [ROS2 edge agent skeleton](edge/ros2-edge-agent-cpp/README.md) documents the
-  robot-near package scaffold.
-- [Local Docker Compose](infra/docker-compose/README.md), [Kubernetes edge
-  reference](infra/k8s/edge/README.md), and [ArgoCD references](infra/argocd/applications/README.md)
-  are deployment references, not required for the local incident demo.
+- [Local Docker Compose](infra/docker-compose/README.md) explains the optional
+  local Postgres database used by persistence and readiness checks.
 
 ## Usage Notice
 

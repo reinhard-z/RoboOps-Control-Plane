@@ -11,7 +11,6 @@ import type {
   CloudEdgeSimulatorConfig,
   SimulatorAction,
   SimulatorEdgeMessage,
-  SimulatorState,
   SimulatorStep
 } from "./types.js";
 

@@ -74,9 +74,3 @@ pnpm --filter @roboops/fleet-platform test
 ```
 
 Leave `FLEET_PERSISTENCE_MODE` unset for the default in-memory local demo.
-
-Expected later files:
-
-```text
-docker-compose.observability.yml
-```

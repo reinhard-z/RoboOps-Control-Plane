@@ -20,7 +20,7 @@ pair behind one HTTPS ALB:
 - ALB supports native WebSocket upgrades for `/edge/connect`.
 - ALB target groups still use HTTP health checks, so Fleet Platform health is
   checked through `/v1/health/ready` rather than through the WebSocket endpoint.
-- ECS/Fargate can run the existing Node images without Kubernetes.
+- ECS/Fargate can run the existing Node images directly.
 - The stack can hard-pin Fleet Platform to one running task because edge
   connections and in-memory state are process-local.
 - Host-based routing gives separate public HTTPS origins for Fleet Platform and

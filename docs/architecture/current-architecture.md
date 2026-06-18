@@ -6,9 +6,7 @@ The important thing to know: the domain/protocol core is implemented, and
 `apps/fleet-platform` now has the initial API/gateway slice.
 `apps/cloud-edge-simulator` provides the local edge process needed to drive the
 incident demo without ROS 2. `apps/operator-ui` provides the first local
-operator console slice for the incident demo. `edge/ros2-edge-agent-cpp`
-contains the first ROS2 Jazzy C++ package scaffold for the robot-near edge
-agent, but it is still a boundary skeleton rather than a real robot adapter.
+operator console slice for the incident demo.
 
 - `packages/fleet-protocol`: shared message contracts and JSON Schema objects.
 - `packages/fleet-domain`: pure domain state machine.
@@ -35,12 +33,6 @@ agent, but it is still a boundary skeleton rather than a real robot adapter.
   NVIDIA Brev / Isaac Launchable, Isaac Sim, Nova Carter ROS scenes, ROS2
   sidecar probes, and sender scripts that feed the existing Fleet Platform edge
   contract without changing the cloud API.
-- `edge/ros2-edge-agent-cpp`: ROS2 Jazzy C++ edge agent scaffold. It loads the
-  Fleet Platform URL, robot id, and edge agent version; derives the same
-  outbound `/edge/connect?robotId=...` URL as the simulator; and provides C++
-  helpers for current hello, ack, telemetry, and reconnect handshake messages.
-  It does not yet implement WebSocket transport, ROS2 topic/action adapters, or
-  any cloud-to-ROS2/DDS bridge.
 - `apps/operator-ui`: lightweight TypeScript browser app served by a tiny local
   Node server. It reads Fleet Platform REST state, subscribes to `/stream/events`,
   creates `GO_TO_POSE` missions, cancels selected missions, renders a virtual
@@ -72,7 +64,6 @@ flowchart LR
     Worker["event-worker<br/>single-pass outbox worker"]
     Observability["observability<br/>structured logs<br/>Prometheus text metrics"]
     Simulator["cloud-edge-simulator<br/>local WebSocket edge"]
-    EdgeAgent["ros2-edge-agent-cpp<br/>ROS2 scaffold"]
     UI["operator-ui<br/>local browser console"]
     Tests --> Domain
     Tests --> Protocol
@@ -86,7 +77,6 @@ flowchart LR
     Worker --> Observability
     Simulator --> Protocol
     Simulator --> Api
-    EdgeAgent --> Protocol
     UI --> Api
   end
 ```
@@ -94,9 +84,9 @@ flowchart LR
 The domain tests still prove the behavior at the pure reducer level. The
 fleet-platform tests now prove the first process boundary around that behavior.
 
-## Platform Process Target
+## Platform Process Shape
 
-Read this as the next architecture to build.
+Read this as the current runtime process shape.
 
 ```mermaid
 flowchart LR
@@ -123,9 +113,8 @@ when explicitly configured. The platform exposes REST/SSE/WebSocket edges and
 keeps mission decisions inside `fleet-domain`. Queued commands are delivered
 after the edge sends `edge.hello`, which avoids double-delivery between socket
 upgrade and the first edge identity message. The simulator connects outbound to
-`/edge/connect?robotId=...` and uses the same protocol payloads future ROS 2
-edge code must produce. The C++ ROS2 package now models that future edge boundary
-without adding a cloud-to-DDS path.
+`/edge/connect?robotId=...` and uses the same protocol payloads as the
+Isaac/Brev sender scripts.
 
 ## Mission Incident Flow
 

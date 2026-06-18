@@ -158,7 +158,7 @@ export interface CommandAckV1 {
   readonly causationId: CausationId;
 }
 
-/** Generic event wrapper used for domain events, outbox messages, and future event logs. */
+/** Generic event wrapper used for domain events and outbox messages. */
 export interface EventEnvelopeV1<TPayload extends Record<string, unknown> = Record<string, unknown>> {
   readonly schemaVersion: typeof protocolSchemaVersions.eventEnvelope;
   readonly eventId: EventId;

@@ -116,7 +116,7 @@ cd RoboOps-Control-Plane
 
 If the clone fails with `Permission denied` under
 `/home/ubuntu/RoboOps-Control-Plane/.git`, check whether a previous setup left a
-root-owned placeholder directory:
+root-owned directory:
 
 ```sh
 ls -ld ~/RoboOps-Control-Plane

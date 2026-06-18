@@ -21,5 +21,4 @@ The UI only needs server-to-browser updates for the first demo. Robot-edge runti
 
 - SSE remains simple for dashboard updates.
 - Edge agents do not need inbound public ports.
-- The edge protocol can later move to gRPC streaming, MQTT, or NATS JetStream without changing the domain model.
-
+- Domain state changes stay independent from the concrete edge transport.

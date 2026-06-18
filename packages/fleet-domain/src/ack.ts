@@ -148,7 +148,7 @@ export function applyCommandAck(
         updatedAt: now,
       } satisfies RobotSnapshot);
 
-  // Domain events are machine-facing records for API streams and future persistence.
+  // Domain events are machine-facing records for API streams and persistence.
   const event = createDomainEvent(state, {
     eventType: "mission.command.acked",
     aggregateType: "command",

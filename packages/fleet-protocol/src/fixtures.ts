@@ -10,7 +10,7 @@ import {
   protocolSchemaVersions
 } from "./types.js";
 
-/** Deterministic protocol examples used by tests and future contract documentation. */
+/** Deterministic protocol examples used by tests and contract documentation. */
 export const fixtureTimestamps = {
   issuedAt: "2026-05-10T12:00:00.000Z",
   expiresAt: "2026-05-10T12:00:10.000Z",

@@ -146,7 +146,7 @@ The first adapter should consume only common ROS2 messages:
 | --- | --- |
 | Sim time | `/clock` |
 | Robot pose | `/chassis/odom`, with `/tf` fallback |
-| Robot command input | Bounded `/cmd_vel` smoke shim first; Nav2/action mapping later |
+| Robot command input | Bounded `/cmd_vel` smoke shim for command evidence |
 | Basic health | Diagnostics, watchdog state, or adapter policy |
 | Battery | Battery plugin, diagnostic topic, or configured fallback |
 

@@ -1,4 +1,4 @@
-/** Structured log fields kept JSON-compatible for local logs and future collectors. */
+/** Structured log fields kept JSON-compatible for local logs and metrics context. */
 export type LogFields = Readonly<Record<string, unknown>>;
 
 /** Minimal logger interface used by apps without depending on a logging library. */

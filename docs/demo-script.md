@@ -10,12 +10,10 @@ a hosted robot.
 - The cloud-edge simulator acts as the robot-near runtime for the demo.
 - Operator UI creates missions, injects demo faults, and shows the event
   timeline.
-- No cloud process connects directly to ROS2/DDS; future edge-agent work keeps
-  ROS2/DDS inside the robot-near runtime.
+- No cloud process connects directly to ROS2/DDS; the Isaac/Brev smoke path
+  feeds Fleet Platform through the same outbound edge contract.
 - The demo is not safety certification and does not exercise real hardware.
 - Demo controls require `DEMO_MODE=true` and a shared local demo token.
-- GitOps and Kubernetes docs are production references for software rollout;
-  they are not part of mission dispatch.
 
 This script is intentionally the default local reviewer path. For robotics
 simulation evidence with Isaac Sim, Nova Carter ROS scenes, ROS2 topic probes,
@@ -168,9 +166,6 @@ reconnects with a handshake, and resumes telemetry.
 For local recordings, keep `CORS_ALLOW_ORIGIN=http://127.0.0.1:4020`. A hosted
 recording environment should use a high-entropy demo token, exact CORS origin,
 provider-level access controls, and no real robot credentials.
-
-For a short-lived AWS/Kubernetes recording, use the focused evidence checklist
-in the [AWS/Kubernetes demo runbook](aws-kubernetes-demo-runbook.md).
 
 ```sh
 # Fleet Platform

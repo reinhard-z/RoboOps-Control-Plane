@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS fleet_persistence.outbox_events (
 );
 
 COMMENT ON TABLE fleet_persistence.outbox_events IS
-  'Transactional outbox queue for future at-least-once publication workers.';
+  'Transactional outbox queue for at-least-once publication workers.';
 
 CREATE TABLE IF NOT EXISTS fleet_persistence.idempotency_keys (
   idempotency_key_id bigserial PRIMARY KEY,

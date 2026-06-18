@@ -8,7 +8,7 @@ cloud-side demo components:
 
 The reference stack uses ECS on Fargate behind one internet-facing Application
 Load Balancer. It intentionally does not deploy Isaac Sim, the cloud-edge
-simulator, Postgres, EKS, App Runner, or ArgoCD.
+simulator, Postgres, or additional hosting platforms.
 
 ## Deployment Shape
 
