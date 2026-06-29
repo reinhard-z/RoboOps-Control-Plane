@@ -27,7 +27,7 @@
     "@roboops/fleet-persistence": "workspace:*",
     "@roboops/fleet-protocol": "workspace:*",
     "@roboops/observability": "workspace:*",
-    "fastify": "^5.8.5",
+    "fastify": "^5.9.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
