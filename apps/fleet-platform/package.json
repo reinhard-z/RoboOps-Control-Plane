@@ -22,13 +22,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@fastify/cors": "^11.2.0",
+    "@fastify/cors": "^11.3.0",
     "@roboops/fleet-domain": "workspace:*",
     "@roboops/fleet-persistence": "workspace:*",
     "@roboops/fleet-protocol": "workspace:*",
     "@roboops/observability": "workspace:*",
-    "fastify": "^5.8.5",
-    "ws": "^8.21.0"
+    "fastify": "^5.11.2",
+    "ws": "^8.21.2"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1"
